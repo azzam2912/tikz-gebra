@@ -5,8 +5,9 @@ import type { Graph, PointId } from '../graph/types';
 import { boundingBox, drawnPoints, labelsOf, shapesOf, type LabelPos, type Shape } from './shapes';
 import { fitBox, gridStep, panBy, toMath, toScreen, zoomAt, type Viewport } from './viewport';
 
-/** What the pointer is over: a point (by name) or a drawing (by id). */
-export type HoverTarget = { kind: 'point'; name: PointId } | { kind: 'drawing'; id: string } | null;
+import type { HoverTarget } from './hover';
+
+export type { HoverTarget };
 
 export interface CanvasProps {
   graph: Graph | null;
@@ -17,13 +18,14 @@ export interface CanvasProps {
   onHover: (h: HoverTarget) => void;
   /** Called continuously while a free point is dragged (math coords, unrounded). */
   onDrag?: (name: PointId, p: Vec) => void;
+  onDragStart?: (name: PointId) => void;
   onDragEnd?: () => void;
 }
 
 const POINT_R_FREE = 5.5;
 const POINT_R_DERIVED = 3.5;
 
-export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragEnd }: CanvasProps) {
+export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragStart, onDragEnd }: CanvasProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [vp, setVp] = useState<Viewport>({ cx: 0, cy: 0, scale: 50, width: 800, height: 600 });
@@ -89,6 +91,7 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragEnd
       const m = toMath(vp, s);
       action.current = { type: 'drag', name, offset: { x: p.x - m.x, y: p.y - m.y }, id: e.pointerId };
       setCursor('move');
+      onDragStart?.(name);
     } else {
       action.current = { type: 'pan', last: s, id: e.pointerId };
       setCursor('grabbing');
@@ -123,7 +126,7 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragEnd
   const drawn = useMemo(() => (graph ? drawnPoints(graph) : new Set<PointId>()), [graph]);
   const S = useCallback((p: Vec) => toScreen(vp, p), [vp]);
 
-  const hoveredPoint = hover?.kind === 'point' ? hover.name : null;
+  const hoveredStep = hover?.kind === 'step' ? hover.id : null;
   const hoveredDrawing = hover?.kind === 'drawing' ? hover.id : null;
   const dragging = action.current?.type === 'drag' ? action.current.name : null;
 
@@ -165,7 +168,7 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragEnd
             if (!p) return null;
             const q = S(p);
             const free = step.c.op === 'free';
-            const hot = hoveredPoint === name || dragging === name;
+            const hot = hoveredStep === step.id || dragging === name;
             const ghost = !drawn.has(name);
             const r = free ? POINT_R_FREE : POINT_R_DERIVED;
             return (
@@ -173,7 +176,7 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragEnd
                 key={name}
                 className={`pt ${free ? 'free' : 'derived'}${ghost ? ' ghost' : ''}${hot ? ' hot' : ''}`}
                 {...(free && onDrag ? { 'data-free-point': name } : {})}
-                onPointerEnter={() => !action.current && onHover({ kind: 'point', name })}
+                onPointerEnter={() => !action.current && onHover({ kind: 'step', id: step.id })}
                 onPointerLeave={() => !action.current && onHover(null)}
               >
                 {/* larger invisible hit area */}

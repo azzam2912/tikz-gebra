@@ -1,18 +1,35 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { generate } from '../codegen/codegen';
 import { EXAMPLES } from '../examples';
 import { evaluate } from '../geom/evaluate';
 import type { Vec } from '../geom/vec';
 import { moveFreePoint, type Graph, type PointId } from '../graph/types';
+import type { Span } from '../parser/ast';
 import { compile } from '../pipeline';
-import { Canvas, type HoverTarget } from './Canvas';
+import { Canvas } from './Canvas';
+import { targetAt, type HoverTarget } from './hover';
+import { Editor, type EditorHandle } from './Editor';
 import { roundCoord } from './rounding';
 
+const PARSE_DEBOUNCE_MS = 150;
+
 export function App() {
+  const editor = useRef<EditorHandle>(null);
+  /** Text that has been parsed (lags the editor by the debounce delay). */
   const [code, setCode] = useState(EXAMPLES[0]!.code);
   const [fitToken, setFitToken] = useState(0);
-  const [hover, setHover] = useState<HoverTarget>(null);
+  const [hover, setHoverState] = useState<HoverTarget>(null);
+  /** Who set the current hover; each side only clears its own (pointer events of the
+   *  canvas fire before the editor's mouseleave, so a blind clear would erase them). */
+  const hoverSource = useRef<'canvas' | 'editor' | null>(null);
+  const setHoverFrom = useCallback((source: 'canvas' | 'editor', t: HoverTarget) => {
+    if (t === null && hoverSource.current !== source) return;
+    hoverSource.current = t ? source : null;
+    setHoverState((h) => (h?.kind === t?.kind && h?.id === t?.id ? h : t));
+  }, []);
+  const onCanvasHover = useCallback((t: HoverTarget) => setHoverFrom('canvas', t), [setHoverFrom]);
   const [snap, setSnap] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const result = useMemo(() => compile(code), [code]);
   const [lastGraph, setLastGraph] = useState<Graph | null>(null);
@@ -21,6 +38,21 @@ export function App() {
   const pos = useMemo(() => (graph ? evaluate(graph) : new Map()), [graph]);
   const hasErrors = result.graph === null;
 
+  // ------------------------------------------------------------ code → canvas
+  const onUserChange = useCallback((text: string) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCode(text), PARSE_DEBOUNCE_MS);
+  }, []);
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+
+  /** Replace the whole text from outside (examples, drag) and parse right away. */
+  const replaceCode = useCallback((text: string) => {
+    if (timer.current) clearTimeout(timer.current);
+    editor.current?.setText(text);
+    setCode(text);
+  }, []);
+
+  // ------------------------------------------------------------ canvas → code
   const onDrag = useCallback(
     (name: PointId, p: Vec) => {
       if (!result.graph) return;
@@ -28,9 +60,30 @@ export function App() {
       const y = roundCoord(p.y, snap);
       const step = result.graph.steps.find((s) => s.c.op === 'free' && s.c.out[0] === name);
       if (step?.c.op === 'free' && step.c.x === x && step.c.y === y) return;
-      setCode(generate(moveFreePoint(result.graph, name, x, y)));
+      replaceCode(generate(moveFreePoint(result.graph, name, x, y)));
     },
-    [result.graph, snap],
+    [result.graph, snap, replaceCode],
+  );
+
+  // ------------------------------------------------------------ hover linking
+  // Spans only match the editor text when the shown graph was parsed from it.
+  const spansValid = !hasErrors;
+  const highlight = useMemo<Span[]>(() => {
+    if (!hover || !graph || !spansValid) return [];
+    const span =
+      hover.kind === 'step' ? graph.steps.find((s) => s.id === hover.id)?.span : graph.drawings.find((d) => d.id === hover.id)?.span;
+    return span ? [span] : [];
+  }, [hover, graph, spansValid]);
+
+  const onHoverOffset = useCallback(
+    (offset: number | null) => {
+      if (offset === null || !result.graph || editor.current?.getText() !== code) {
+        setHoverFrom('editor', null);
+        return;
+      }
+      setHoverFrom('editor', targetAt(result.graph, offset));
+    },
+    [result.graph, code, setHoverFrom],
   );
 
   return (
@@ -42,7 +95,7 @@ export function App() {
           onChange={(e) => {
             const ex = EXAMPLES.find((x) => x.id === e.target.value);
             if (ex) {
-              setCode(ex.code);
+              replaceCode(ex.code);
               setFitToken((t) => t + 1);
             }
           }}
@@ -61,21 +114,30 @@ export function App() {
       </div>
       <div className="panes">
         <div className="left">
-          <textarea className="plain-editor" value={code} spellCheck={false} onChange={(e) => setCode(e.target.value)} />
+          <Editor
+            ref={editor}
+            initial={code}
+            onUserChange={onUserChange}
+            diagnostics={result.diagnostics}
+            highlight={highlight}
+            onHoverOffset={onHoverOffset}
+          />
           <div className="status">
-            {hasErrors && <div className="stale">Showing the last valid figure — dragging is disabled until the errors are fixed.</div>}
+            {hasErrors && (
+              <div className="stale">Showing the last valid figure. Dragging is disabled until the errors are fixed.</div>
+            )}
             {result.diagnostics.length === 0 ? (
               <div className="ok">✓ No problems</div>
             ) : (
               result.diagnostics.map((d, i) => (
-                <div key={i} className={`row ${d.severity}`}>
+                <div key={i} className={`row ${d.severity}`} onClick={() => editor.current?.reveal(d.from, d.to)}>
                   <b>Line {d.line}:</b> {d.message}
                 </div>
               ))
             )}
             <div className="note">
               Dragging a point regenerates the code in canonical form (definitions → drawings → labels); comments and
-              custom formatting are dropped.
+              custom formatting are dropped. Ctrl+Z undoes a whole drag.
             </div>
           </div>
         </div>
@@ -84,8 +146,10 @@ export function App() {
           pos={pos}
           fitToken={fitToken}
           hover={hover}
-          onHover={setHover}
+          onHover={onCanvasHover}
+          onDragStart={() => editor.current?.beginBatch()}
           onDrag={hasErrors ? undefined : onDrag}
+          onDragEnd={() => editor.current?.endBatch()}
         />
       </div>
     </div>
