@@ -87,6 +87,8 @@ export interface Diagnostic {
   to: number;
   /** 1-based line of `from`. */
   line: number;
+  /** Machine-readable kind, for diagnostics the UI reacts to. */
+  code?: 'forward-ref';
 }
 
 export interface ParseResult {

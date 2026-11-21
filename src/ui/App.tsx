@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { generate } from '../codegen/codegen';
+import { fullDocument, generate } from '../codegen/codegen';
+import { extractBody } from '../codegen/export';
 import { EXAMPLES } from '../examples';
 import { evaluate } from '../geom/evaluate';
 import type { Vec } from '../geom/vec';
@@ -29,6 +30,8 @@ export function App() {
   }, []);
   const onCanvasHover = useCallback((t: HoverTarget) => setHoverFrom('canvas', t), [setHoverFrom]);
   const [snap, setSnap] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const result = useMemo(() => compile(code), [code]);
@@ -86,6 +89,24 @@ export function App() {
     [result.graph, code, setHoverFrom],
   );
 
+  // ------------------------------------------------------------ export
+  const exportBody = (): { body: string; note: string } => {
+    const text = editor.current?.getText() ?? code;
+    const r = text === code ? result : compile(text);
+    if (r.graph && r.diagnostics.some((d) => d.code === 'forward-ref')) {
+      return { body: generate(r.graph), note: ' (reordered so every point is defined before use)' };
+    }
+    return { body: extractBody(text), note: r.graph ? '' : ' — note: the code has errors' };
+  };
+  const copy = async (what: 'body' | 'document') => {
+    const { body, note } = exportBody();
+    const text = what === 'body' ? body : fullDocument(body);
+    const ok = await copyToClipboard(text);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(ok ? `Copied ${what === 'body' ? 'code' : 'full document'}${note}` : 'Copy failed: clipboard not available');
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  };
+
   return (
     <div className="app">
       <div className="toolbar">
@@ -111,6 +132,14 @@ export function App() {
         <label title="Round dragged points to multiples of 0.5">
           <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> Snap to 0.5
         </label>
+        <span className="spacer" />
+        {toast && <span className="toast">{toast}</span>}
+        <button onClick={() => copy('body')} title="Copy the tkz-euclide commands only">
+          Copy code
+        </button>
+        <button className="primary" onClick={() => copy('document')} title="Copy a compilable standalone document">
+          Copy full document
+        </button>
       </div>
       <div className="panes">
         <div className="left">
@@ -154,4 +183,22 @@ export function App() {
       </div>
     </div>
   );
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // fallback for non-secure contexts
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  }
 }

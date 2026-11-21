@@ -14,8 +14,8 @@ export interface BuildResult {
 export function buildGraph(src: string, parsed: ParseResult): BuildResult {
   const lineOf = makeLineIndex(src);
   const diags: Diagnostic[] = [...parsed.diagnostics];
-  const push = (severity: Severity, message: string, from: number, to: number) =>
-    diags.push({ severity, message, from, to: Math.max(to, from + 1), line: lineOf(from) });
+  const push = (severity: Severity, message: string, from: number, to: number, code?: Diagnostic['code']) =>
+    diags.push({ severity, message, from, to: Math.max(to, from + 1), line: lineOf(from), ...(code ? { code } : {}) });
 
   // 1. collect definitions
   const defs: DefStatement[] = [];
@@ -53,6 +53,7 @@ export function buildGraph(src: string, parsed: ParseResult): BuildResult {
           `${name} is used before it is defined (line ${lineOf(def.st.span.from)}); LaTeX would fail here. The regenerated code puts definitions in dependency order.`,
           span.from,
           span.to,
+          'forward-ref',
         );
       }
       deps[i]!.push(def.index);
