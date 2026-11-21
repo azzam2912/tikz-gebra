@@ -198,6 +198,20 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragEnd
           }),
         )}
       </svg>
+      <div className="legend">
+        <span>
+          <i style={{ width: 9, height: 9, background: 'var(--free)' }} />
+          free (drag)
+        </span>
+        <span>
+          <i style={{ width: 6, height: 6, background: 'var(--derived)' }} />
+          derived
+        </span>
+        <span>
+          <i style={{ width: 6, height: 6, background: 'var(--derived)', opacity: 0.45 }} />
+          not in \tkzDrawPoints
+        </span>
+      </div>
     </div>
   );
 }
