@@ -1,23 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { extractAsyBody, fullAsyDocument, generateAsy } from '../codegen/asy';
 import { fullDocument, generate } from '../codegen/codegen';
 import { extractBody } from '../codegen/export';
 import { EXAMPLES } from '../examples';
 import { evaluate } from '../geom/evaluate';
 import type { Vec } from '../geom/vec';
-import { moveFreePoint, type Graph, type PointId } from '../graph/types';
+import type { Graph, PointId } from '../graph/types';
 import type { Span } from '../parser/ast';
-import { compile } from '../pipeline';
+import { compile, detectLang, type Lang } from '../pipeline';
 import { Canvas } from './Canvas';
 import { targetAt, type HoverTarget } from './hover';
 import { Editor, type EditorHandle } from './Editor';
-import { roundCoord } from './rounding';
+import { applyEdits, moveEdits } from './literal';
 
 const PARSE_DEBOUNCE_MS = 150;
+
+export type LangChoice = 'auto' | Lang;
+
+export const LANG_NAMES: Record<Lang, string> = { tkz: 'tkz-euclide / TikZ', asy: 'Asymptote' };
 
 export function App() {
   const editor = useRef<EditorHandle>(null);
   /** Text that has been parsed (lags the editor by the debounce delay). */
   const [code, setCode] = useState(EXAMPLES[0]!.code);
+  const [langChoice, setLangChoice] = useState<LangChoice>('auto');
+  const lang: Lang = langChoice === 'auto' ? detectLang(code) : langChoice;
   const [fitToken, setFitToken] = useState(0);
   const [hover, setHoverState] = useState<HoverTarget>(null);
   /** Who set the current hover; each side only clears its own (pointer events of the
@@ -34,12 +41,18 @@ export function App() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const result = useMemo(() => compile(code), [code]);
+  const result = useMemo(() => compile(code, lang), [code, lang]);
   const [lastGraph, setLastGraph] = useState<Graph | null>(null);
   const graph = result.graph ?? lastGraph;
   if (result.graph && result.graph !== lastGraph) setLastGraph(result.graph);
   const pos = useMemo(() => (graph ? evaluate(graph) : new Map()), [graph]);
   const hasErrors = result.graph === null;
+
+  const say = (text: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(text);
+    toastTimer.current = setTimeout(() => setToast(null), 4000);
+  };
 
   // ------------------------------------------------------------ code → canvas
   const onUserChange = useCallback((text: string) => {
@@ -56,16 +69,18 @@ export function App() {
   }, []);
 
   // ------------------------------------------------------------ canvas → code
+  // Dragging rewrites only the numbers of the dragged point, in place.
   const onDrag = useCallback(
     (name: PointId, p: Vec) => {
-      if (!result.graph) return;
-      const x = roundCoord(p.x, snap);
-      const y = roundCoord(p.y, snap);
+      if (!result.graph || editor.current?.getText() !== code) return;
       const step = result.graph.steps.find((s) => s.c.op === 'free' && s.c.out[0] === name);
-      if (step?.c.op === 'free' && step.c.x === x && step.c.y === y) return;
-      replaceCode(generate(moveFreePoint(result.graph, name, x, y)));
+      if (!step?.lit || step.c.op !== 'free') return;
+      const m = moveEdits(step.lit, p.x, p.y, snap);
+      if (!m) return;
+      const next = applyEdits(code, m.edits);
+      if (next !== code) replaceCode(next);
     },
-    [result.graph, snap, replaceCode],
+    [result.graph, code, snap, replaceCode],
   );
 
   // ------------------------------------------------------------ hover linking
@@ -89,10 +104,11 @@ export function App() {
     [result.graph, code, setHoverFrom],
   );
 
-  // ------------------------------------------------------------ export
+  // ------------------------------------------------------------ export & convert
   const exportBody = (): { body: string; note: string } => {
     const text = editor.current?.getText() ?? code;
-    const r = text === code ? result : compile(text);
+    if (lang === 'asy') return { body: extractAsyBody(text), note: result.graph ? '' : ' — note: the code has errors' };
+    const r = text === code ? result : compile(text, lang);
     if (r.graph && r.diagnostics.some((d) => d.code === 'forward-ref')) {
       return { body: generate(r.graph), note: ' (reordered so every point is defined before use)' };
     }
@@ -100,11 +116,19 @@ export function App() {
   };
   const copy = async (what: 'body' | 'document') => {
     const { body, note } = exportBody();
-    const text = what === 'body' ? body : fullDocument(body);
+    const text = what === 'body' ? body : lang === 'asy' ? fullAsyDocument(body) : fullDocument(body);
     const ok = await copyToClipboard(text);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast(ok ? `Copied ${what === 'body' ? 'code' : 'full document'}${note}` : 'Copy failed: clipboard not available');
-    toastTimer.current = setTimeout(() => setToast(null), 3500);
+    say(ok ? `Copied ${what === 'body' ? 'code' : 'full document'}${note}` : 'Copy failed: clipboard not available');
+  };
+  const convert = (to: Lang) => {
+    if (!result.graph) return;
+    const notes: string[] = [];
+    const text = to === 'asy' ? generateAsy(result.graph, { pos, notes, precise: true }) : generate(result.graph, { pos, notes, precise: true });
+    setLangChoice('auto');
+    replaceCode(text);
+    editor.current?.reveal(0, 0); // focus the editor so Ctrl+Z undoes the conversion
+    setFitToken((t) => t + 1);
+    say(`Converted to ${LANG_NAMES[to]}${notes.length ? ` (${notes.length} note${notes.length > 1 ? 's' : ''}: ${notes[0]})` : ''}. Ctrl+Z brings the original back.`);
   };
 
   return (
@@ -128,13 +152,21 @@ export function App() {
             </option>
           ))}
         </select>
+        <select value={langChoice} onChange={(e) => setLangChoice(e.target.value as LangChoice)} title="Language of the code">
+          <option value="auto">Auto ({LANG_NAMES[detectLang(code)]})</option>
+          <option value="tkz">{LANG_NAMES.tkz}</option>
+          <option value="asy">{LANG_NAMES.asy}</option>
+        </select>
         <button onClick={() => setFitToken((t) => t + 1)}>Fit view</button>
-        <label title="Round dragged points to multiples of 0.5">
-          <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> Snap to 0.5
+        <label title="Round dragged points to multiples of 0.5 (polar points: 5°)">
+          <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> Snap
         </label>
         <span className="spacer" />
         {toast && <span className="toast">{toast}</span>}
-        <button onClick={() => copy('body')} title="Copy the tkz-euclide commands only">
+        <button onClick={() => convert(lang === 'asy' ? 'tkz' : 'asy')} disabled={hasErrors} title="Rewrite the figure in the other language">
+          Convert to {lang === 'asy' ? 'tkz-euclide' : 'Asymptote'}
+        </button>
+        <button onClick={() => copy('body')} title="Copy the drawing code only">
           Copy code
         </button>
         <button className="primary" onClick={() => copy('document')} title="Copy a compilable standalone document">
@@ -150,6 +182,7 @@ export function App() {
             diagnostics={result.diagnostics}
             highlight={highlight}
             onHoverOffset={onHoverOffset}
+            language={lang === 'asy' ? 'asy' : 'tex'}
           />
           <div className="status">
             {hasErrors && (
@@ -165,8 +198,8 @@ export function App() {
               ))
             )}
             <div className="note">
-              Dragging a point regenerates the code in canonical form (definitions → drawings → labels); comments and
-              custom formatting are dropped. Ctrl+Z undoes a whole drag.
+              Dragging a point rewrites only its numbers in the code. Points written as (angle:r) or dir(angle) move along their
+              circle. Ctrl+Z undoes a whole drag.
             </div>
           </div>
         </div>

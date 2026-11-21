@@ -1,0 +1,13 @@
+% Plain TikZ coordinates mixed with tkz-euclide
+\coordinate[label=below left:$O$] (O) at (0,0);
+\coordinate[label=right:$P$] (P) at (5,1);
+\tkzDefPoint(0:2){A}
+\tkzDefMidPoint(O,P) \tkzGetPoint{M}
+\tkzInterCC(M,O)(O,A) \tkzGetPoints{T}{T'}
+\draw[thick] (O) circle (2);
+\draw[blue] (P) -- (T) (P) -- (T');
+\draw[dashed] (O) -- (T) -- (P) -- cycle;
+\tkzMarkRightAngle(O,T,P)
+\tkzDrawPoints(O,P,T,T')
+\tkzLabelPoints[above](T)
+\tkzLabelPoints[below](T')

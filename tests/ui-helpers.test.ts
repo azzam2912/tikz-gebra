@@ -32,7 +32,7 @@ describe('rendering helpers', () => {
   });
   it('\\tkzDrawLine is extended by 20% on both sides', () => {
     const g = compile('\\tkzDefPoints{0/0/A, 10/0/B}\n\\tkzDrawLine(A,B)').graph!;
-    expect(shapesOf(g.drawings[0]!, evaluate(g))).toEqual([{ type: 'segment', a: { x: -2, y: 0 }, b: { x: 12, y: 0 } }]);
+    expect(shapesOf(g.drawings[0]!, evaluate(g))).toEqual([{ shape: { type: 'segment', a: { x: -2, y: 0 }, b: { x: 12, y: 0 } }, style: {} }]);
   });
   it('drawings touching an undefined point are hidden', () => {
     const g = compile(

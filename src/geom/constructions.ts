@@ -3,6 +3,7 @@
 // tkz-euclide 5.06c; see docs/assumptions.md.
 
 import { add, cross, dist, dot, EPS, isFiniteVec, len, rot90, scale, sub, type Vec } from './vec';
+import type { InterOrder } from '../parser/ast';
 
 const ok = (p: Vec): Vec | null => (isFiniteVec(p) ? p : null);
 
@@ -141,4 +142,123 @@ export function orthocenter(a: Vec, b: Vec, c: Vec): Vec | null {
   if (!o) return null;
   // H = A + B + C − 2·O (Euler)
   return ok({ x: a.x + b.x + c.x - 2 * o.x, y: a.y + b.y + c.y - 2 * o.y });
+}
+
+// ------------------------------------------------------------------ transformations
+
+/** \tkzDefPointBy[reflection=over A--B](P): mirror image of P in line AB. */
+export function reflection(p: Vec, a: Vec, b: Vec): Vec | null {
+  const h = projection(p, a, b);
+  return h ? ok(sub(scale(h, 2), p)) : null;
+}
+
+/** \tkzDefPointBy[symmetry=center C](P) = 2C − P. */
+export function symmetry(p: Vec, c: Vec): Vec {
+  return { x: 2 * c.x - p.x, y: 2 * c.y - p.y };
+}
+
+/** \tkzDefPointBy[homothety=center C ratio k](P) = C + k(P − C). */
+export function homothety(p: Vec, c: Vec, k: number): Vec | null {
+  return ok(add(c, scale(sub(p, c), k)));
+}
+
+/** \tkzDefPointBy[rotation=center C angle a](P), a in degrees, counter-clockwise. */
+export function rotation(p: Vec, c: Vec, deg: number): Vec | null {
+  const t = (deg * Math.PI) / 180;
+  const d = sub(p, c);
+  return ok({ x: c.x + d.x * Math.cos(t) - d.y * Math.sin(t), y: c.y + d.x * Math.sin(t) + d.y * Math.cos(t) });
+}
+
+/** \tkzDefPointBy[translation=from A to B](P) = P + B − A. */
+export function translation(p: Vec, a: Vec, b: Vec): Vec {
+  return add(p, sub(b, a));
+}
+
+/**
+ * \tkzDefLine[tangent at=C](O): a point on the tangent at C to the circle centred at O.
+ * tkz-euclide (\tkzTgtAt → \tkz@VecKOrthNorm[-1](C,O)): C − rot90((O − C)/|O − C|), i.e. 1 cm away.
+ */
+export function tangentAt(c: Vec, o: Vec): Vec | null {
+  const d = dist(c, o);
+  if (d <= EPS * Math.max(1, len(c), len(o))) return null;
+  return ok(sub(c, rot90(scale(sub(o, c), 1 / d))));
+}
+
+const slope = (o: Vec, p: Vec): number => (Math.atan2(p.y - o.y, p.x - o.x) * 180) / Math.PI;
+
+/** tkz-euclide's \tkzNormalizeAngle (non-Lua version), angles in degrees. */
+export function normalizeAngles(a: number, b: number): [number, number] {
+  if (a > 0) return a > b ? [a - 360, b] : [a, b];
+  return a > b ? [a, b + 360] : [a, b];
+}
+
+/**
+ * \tkzDefMidArc(O,A,B): middle of the arc of the circle (O, |OA|) from A counter-clockwise to
+ * the direction of B (tkz-euclide: arc from slope(O,A) to slope(O,B), normalised, "midway").
+ */
+export function midArc(o: Vec, a: Vec, b: Vec): Vec | null {
+  const r = dist(o, a);
+  if (r <= 0 || dist(o, b) <= 0) return null;
+  const [t1, t2] = normalizeAngles(slope(o, a), slope(o, b));
+  const t = (((t1 + t2) / 2) * Math.PI) / 180;
+  return ok({ x: o.x + r * Math.cos(t), y: o.y + r * Math.sin(t) });
+}
+
+/**
+ * Excenter: \tkzDefTriangleCenter[ex](A,B,C) is the centre of the excircle OPPOSITE B
+ * (tkz-euclide \tkzExCenter(#1,#2,#3) intersects the external bisectors at #1 and #3).
+ */
+export function excenterOpposite2nd(a: Vec, b: Vec, c: Vec): Vec | null {
+  if (collinear(a, b, c)) return null;
+  const la = dist(b, c);
+  const lb = dist(c, a);
+  const lc = dist(a, b);
+  const w = la - lb + lc;
+  if (Math.abs(w) <= EPS) return null;
+  return ok({ x: (la * a.x - lb * b.x + lc * c.x) / w, y: (la * a.y - lb * b.y + lc * c.y) / w });
+}
+
+/** Nine-point (Euler) centre = midpoint of circumcentre and orthocentre. */
+export function eulerCenter(a: Vec, b: Vec, c: Vec): Vec | null {
+  const o = circumcenter(a, b, c);
+  const h = orthocenter(a, b, c);
+  return o && h ? midpoint(o, h) : null;
+}
+
+// ------------------------------------------------------------------ intersection order
+
+const angle0 = (o: Vec, p: Vec): number => {
+  const t = Math.atan2(p.y - o.y, p.x - o.x);
+  return t < 0 ? t + 2 * Math.PI : t;
+};
+
+/**
+ * Put two intersection points (computed in tkz-euclide order) into another front end's order.
+ * `dir` is the direction of the line (interLC) or of the radical line (interCC);
+ * `o` the centre of the circle the "asy-angle" order walks around; `a` the start of the line.
+ */
+export function reorder(pts: [Vec, Vec], order: InterOrder | undefined, dir: Vec, o: Vec, a: Vec): [Vec, Vec] {
+  const [p, q] = pts;
+  let swap = false;
+  switch (order ?? 'tkz') {
+    case 'tkz':
+    case 'common': // handled by the caller (needs the common point)
+      return pts;
+    case 'near':
+      swap = dist(p, a) >= dist(q, a);
+      break;
+    case 'asy-y': {
+      // geometry.asy solves the quadratic in y unless the line is horizontal; roots ascend
+      const horizontal = Math.abs(dir.y) <= 1e-9 * Math.max(1, len(dir));
+      swap = horizontal ? p.x > q.x : p.y > q.y;
+      break;
+    }
+    case 'asy-path1':
+      swap = angle0(o, p) > angle0(o, q);
+      break;
+    case 'asy-path2':
+      swap = dot(sub(p, a), dir) > dot(sub(q, a), dir);
+      break;
+  }
+  return swap ? [q, p] : pts;
 }

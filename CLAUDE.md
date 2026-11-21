@@ -1,8 +1,9 @@
 # CLAUDE.md — TikZGeo
 
-Bidirectional tkz-euclide ⇄ interactive geometry editor (Vite + TypeScript strict + React +
-CodeMirror 6 + plain SVG, Vitest; no backend). Read `HANDOFF.md` for the current status and
-`docs/assumptions.md` for verified tkz-euclide semantics.
+Bidirectional geometry code ⇄ interactive figure editor for tkz-euclide, plain TikZ and
+Asymptote (Vite + TypeScript strict + React + CodeMirror 6 + plain SVG, Vitest; no backend).
+Read `HANDOFF.md` for the current status and `docs/assumptions.md` for verified tkz-euclide and
+Asymptote semantics.
 
 ## Git workflow (mandatory)
 
@@ -32,9 +33,11 @@ npm test
 ```
 
 - `tsc` must be clean and all tests green.
-- `npm test` includes `tests/latex.test.ts`, which compiles ~300 constructions with real
-  pdflatex + tkz-euclide and compares coordinates. It is skipped automatically when LaTeX is
-  not installed. If it's skipped, say so in your report and don't claim LaTeX agreement.
+- `npm test` includes `tests/latex.test.ts` (~480 constructions with real pdflatex +
+  tkz-euclide), `tests/asymptote.test.ts` (random figures and conversions with real `asy`) and
+  `tests/corpus.test.ts` (real figures, both programs). Each part is skipped automatically when
+  its program is not installed. If one is skipped, say so in your report and don't claim
+  agreement with that program.
 
 ## Commands
 
@@ -43,24 +46,31 @@ npm test
 | `npm run dev` | Dev server at http://localhost:5173 |
 | `npm test` | All Vitest tests |
 | `npm run test:latex` | Only the real-LaTeX cross-check |
+| `npm run test:asy` | Only the real-Asymptote cross-check |
+| `npm run test:corpus` | Real figures (`GEP_DIR=…` for a whole Geometry-Everyday-Project checkout) |
 | `npm run build` | Typecheck + production build |
 
 ## Architecture: keep the layers separate
 
 ```
-code ──parse──▶ AST ──build──▶ Graph ──evaluate──▶ coords ──▶ SVG
-  ▲                              │
-  └─────────── generate ◀────────┘   (drag edits free points only)
+code ──parse (tkz/TikZ or asy)──▶ statements ──build──▶ Graph ──evaluate──▶ coords ──▶ SVG
+  ▲                                                       │
+  ├── drag: rewrite the dragged free point's numbers in place (spans in `Step.lit`)
+  └────────────── generate (tkz-euclide or Asymptote) ◀──┘   (convert, export)
 ```
 
-- `src/parser/` — Hand-written tokenizer and parser for the supported subset only. No macro
-  expansion, `\foreach` or `\def`. Unknown commands become errors with line numbers, never
-  crashes.
+- `src/parser/` — Hand-written tokenizer and parser for tkz-euclide + plain TikZ. No macro
+  expansion or `\def`; `\foreach` only over a list of names. Unknown commands are skipped
+  with a warning (`code: 'ignored'`); errors inside supported commands are errors with line
+  numbers. Never crashes.
+- `src/asy/` — Asymptote lexer/parser, numeric evaluator, and the front end that maps a program
+  onto the same statements (known calls → tkz-euclide constructions, other pair expressions →
+  `expr` steps).
 - `src/graph/` — Nodes are construction steps (op + parent point names). Topological sort,
   cycle, undefined-reference and duplicate detection.
 - `src/geom/` — Pure math. Degenerate cases return `null` (point hidden), **never NaN**.
-- `src/codegen/` — Graph → canonical code: definitions (topological) → drawings → labels.
-  Body extraction for export.
+- `src/codegen/` — Graph → canonical tkz-euclide (`codegen.ts`) or Asymptote (`asy.ts`):
+  definitions (topological) → drawings → labels. Body extraction for export.
 - `src/ui/` — React components (Editor, Canvas) plus pure helpers (`hover.ts`, `shapes.ts`,
   `viewport.ts`, `rounding.ts`, `textdiff.ts`). Keep logic in pure modules so it can be tested
   without a DOM.
@@ -68,15 +78,24 @@ code ──parse──▶ AST ──build──▶ Graph ──evaluate──▶
 ## Rules
 
 - **Codegen output is symbolic.** Only free points (`op: 'free'`) carry numbers, rounded to
-  2 decimals. Never flatten a derived point into coordinates.
+  2 decimals (6 in conversions). Never flatten a derived point into coordinates. The one
+  exception: an Asymptote `expr` step converted to tkz-euclide becomes a fixed point with a
+  `% was:` comment and a note to the user.
+- **Dragging edits text in place.** Only the dragged point's literal numbers change; never
+  regenerate the user's code on a drag.
 - **The round-trip must hold:** `parse(codegen(graph))` equals `graph`. `tests/roundtrip.test.ts`
   checks this. Add every new construction to its "every construction" sample.
 - **New tkz-euclide commands:** check the exact syntax and semantics against the tkz-euclide
   source (`kpsewhich tkz-euclide.sty`, sibling `.tex` files) and the manual before
   implementing. Add a case to `tests/latex.test.ts`. Record anything you can't confirm in
   `docs/assumptions.md`; don't silently guess.
+- **New Asymptote functions:** check them against `/usr/share/asymptote/*.asy` and
+  `tests/asy/olympiad.asy`, and against real `asy` (especially the order of intersection
+  points). Add them to the random figure in `tests/asymptote.test.ts`.
+- **Conversion must keep every point in place** (`tests/roundtrip.test.ts`,
+  `tests/corpus.test.ts`).
 - **Every supported command needs parser tests,** including error cases.
-- **Out of scope unless the user asks:** real LaTeX compilation in the app, Asymptote, angle
-  marks, arcs, styles/colours, macros, loops, creating objects from the toolbar.
+- **Out of scope unless the user asks:** real LaTeX/Asymptote compilation in the app, arcs,
+  macros, loops (beyond `\foreach` over a list), 3D, creating objects from the toolbar.
 - **Keep `HANDOFF.md` up to date** when finishing a chunk of work (status, next steps, open
   questions).

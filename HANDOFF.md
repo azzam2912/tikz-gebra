@@ -1,20 +1,31 @@
 # Handoff — TikZGeo
 
-Last updated: 2026-11-21. Branches: `main` (stable) and `dev` (work). Both are at the same
-commit right now.
+Last updated: 2026-11-21. Branches: `main` (stable MVP) and `dev` (work, ahead of `main` with
+the multi-language work below; merge only when the user asks).
 
 ## Status
 
-The MVP is **complete** (all five milestones). There are 103 tests and strict `tsc` is clean.
+The MVP is complete, and the editor now reads **tkz-euclide, plain TikZ and Asymptote**, converts
+between tkz-euclide and Asymptote, and edits dragged points **in place**. There are 216 tests and
+strict `tsc` is clean.
 
 | Milestone | Contents | State |
 |---|---|---|
-| M1 | Parser, construction graph, geometry, codegen, tests | ✅ |
-| M2 | Static SVG render, grid/axes, pan + zoom, fit view | ✅ |
-| M3 | Drag free points → live symbolic codegen, 2-decimal rounding, 0.5 snap | ✅ |
-| M4 | CodeMirror editor, 150 ms debounced parse, error underlines, two-way hover, one-step undo of a drag | ✅ |
-| M5 | "Copy code" / "Copy full document", 3 examples, README | ✅ |
-| Extra | `tests/latex.test.ts`: 318 constructions compared with real pdflatex + tkz-euclide 5.06c. All agree, intersection order included (worst deviation 0.0033 cm). | ✅ |
+| M1–M5 | MVP: parser, graph, geometry, codegen, SVG canvas, drag, CodeMirror, hover, export, examples | ✅ |
+| Extra | `tests/latex.test.ts`: ~480 random constructions vs real pdflatex + tkz-euclide 5.06c (worst 0.0028 cm) | ✅ |
+| M6 | More tkz-euclide: polar points, reflection/symmetry/homothety/rotation/translation, `\tkzDefShiftPoint`, tangent, `\tkzDefMidArc`, `[ex]`/`[euler]`, centre shortcuts, `common=`/`near`, `\tkzGetFirst/SecondPoint`, more drawing commands, marks, styles/colours | ✅ |
+| M7 | Plain TikZ: `\coordinate`, `\draw`/`\fill` paths, `\node`, `\pic` angles, `\definecolor`, calc, simple `\foreach`, GeoGebra exports | ✅ |
+| M8 | Asymptote (olympiad/geometry): symbolic front end, Asymptote's intersection order, pens, cse5 helpers, GeoGebra exports | ✅ |
+| M9 | Conversion tkz-euclide ⇄ Asymptote, in-place drag, language picker, Asymptote highlighting | ✅ |
+| Extra | `tests/asymptote.test.ts`: random figures + conversions vs real Asymptote 2.87. `tests/corpus.test.ts`: real figures vs both programs | ✅ |
+
+**Real-world check:** all 90 diagram files of
+[Geometry-Everyday-Project](https://github.com/azzam2912/Geometry-Everyday-Project) (34 Asymptote,
+56 TikZ/tkz-euclide, commit c951c73) load without errors. Every named point agrees with real
+`asy` (≤ 1e-13) or pdflatex (≤ 0.01 cm, TeX rounding), and every file converts to the other
+language with all points within 1e-4. The converted code itself runs in real `asy` / pdflatex
+with the same points. 15 of these files are fixtures in `tests/fixtures/corpus/`; run
+`GEP_DIR=/path/to/checkout npm run test:corpus` for all of them.
 
 ## Continue on your machine
 
@@ -42,81 +53,82 @@ Requirements:
 - **Node 20+.** It was developed with Node 22.
 - **No backend.** Everything runs in the browser.
 
-**Optional: real-LaTeX cross-check.** `tests/latex.test.ts` runs only when `pdflatex` and
-`tkz-euclide.sty` are available; otherwise it is skipped.
+**Optional cross-checks.** `tests/latex.test.ts` needs `pdflatex` + `tkz-euclide.sty`;
+`tests/asymptote.test.ts` needs `asy` (`olympiad.asy` is in `tests/asy/`, because Debian doesn't
+ship it). `tests/corpus.test.ts` uses whichever is there. Missing programs → those parts are skipped.
 
-macOS (BasicTeX, then add the packages):
+macOS (BasicTeX, then add the packages; Asymptote comes with MacTeX or `brew install asymptote`):
 ```bash
 sudo tlmgr update --self && sudo tlmgr install tkz-euclide pgf standalone
 ```
 
 Debian/Ubuntu:
 ```bash
-sudo apt-get install --no-install-recommends texlive-latex-base texlive-latex-recommended texlive-pictures texlive-latex-extra
+sudo apt-get install --no-install-recommends texlive-latex-base texlive-latex-recommended texlive-pictures texlive-latex-extra asymptote
 ```
 
-Windows: MiKTeX installs missing packages on first use.
+Windows: MiKTeX installs missing packages on first use; Asymptote has its own installer.
 
 Check what you have:
 ```bash
-kpsewhich tkz-euclide.sty
+kpsewhich tkz-euclide.sty && asy -version
 ```
 
-⚠ Everything was verified against **tkz-euclide 5.06c** (TeX Live 2023). A newer TeX Live
-ships 5.1x. If `npm run test:latex` fails there, that means real behaviour changed, so
-update `src/geom/constructions.ts` and `docs/assumptions.md` rather than the test.
+⚠ Verified against **tkz-euclide 5.06c** (TeX Live 2023) and **Asymptote 2.87**. If a
+cross-check fails on newer versions, real behaviour changed: update `src/geom/constructions.ts`,
+`src/asy/` and `docs/assumptions.md` rather than the test.
 
 Cloud sessions: a personal environment called **tikz-gebra** exists, with a setup script
-that installs TeX Live and runs `npm ci`. Pick it when you start a cloud session on this
-repo. The script has not yet been exercised on a fresh container.
+that installs TeX Live and runs `npm ci`. It doesn't install `asymptote` yet; add
+`apt-get install -y asymptote` to it if the Asymptote checks should run there.
 
 ## Where things are
 
 | Path | What |
 |---|---|
-| `src/parser/` | `tokenizer.ts`, `parser.ts` (signature-driven, error recovery), `ast.ts` (shared types) |
-| `src/graph/` | `types.ts` (Graph, Step, Drawing, `moveFreePoint`, `structure`), `build.ts` (checks + topological sort) |
-| `src/geom/` | `constructions.ts` (all math, tkz ordering rules), `evaluate.ts`, `vec.ts` |
-| `src/codegen/` | `codegen.ts` (canonical output, `fullDocument`), `export.ts` (`extractBody`) |
-| `src/ui/` | `App.tsx` (state, debounce, drag, hover, export), `Editor.tsx`, `Canvas.tsx`, plus pure helpers |
-| `src/pipeline.ts` | `compile(src)`: parse + build |
-| `tests/` | parser, geom, graph, roundtrip, export, ui-helpers, rounding, latex |
-| `examples/` | triangle-circumcircle, orthocenter, two-circles |
-| `docs/assumptions.md` | Verified semantics, the open assumption, MVP design choices |
+| `src/parser/` | `parser.ts` (tkz-euclide + plain TikZ, signature-driven, error recovery), `tikzpath.ts` (TikZ paths/coordinates/calc), `tokenizer.ts`, `ast.ts` (shared statement + construction types) |
+| `src/asy/` | `parser.ts` (lexer + recursive descent), `front.ts` (Asymptote → statements: known calls → constructions, rest → `expr` steps; `asyRegion`), `expr.ts` (numeric evaluator), `pgf.ts` (pgfmath subset for TikZ) |
+| `src/graph/` | `types.ts` (Graph, Step with `lit` spans, Drawing, `structure`), `build.ts` (checks + topological sort) |
+| `src/geom/` | `constructions.ts` (all math, tkz + Asymptote ordering rules), `evaluate.ts`, `vec.ts` |
+| `src/codegen/` | `codegen.ts` (tkz-euclide, `fullDocument`, `nameMap`), `asy.ts` (Asymptote, `fullAsyDocument`, `extractAsyBody`), `export.ts` |
+| `src/style.ts` | TikZ/xcolor options and Asymptote pens ⇄ neutral `Style` |
+| `src/ui/` | `App.tsx`, `Editor.tsx` (language-aware highlighting), `Canvas.tsx`, pure helpers: `shapes.ts` (scene: styled shapes, labels, handles, TeX label text), `literal.ts` (in-place drag edits), `hover.ts`, `viewport.ts` |
+| `src/pipeline.ts` | `detectLang`, `compile(src, lang)` |
+| `tests/` | parser, parser-extra, asy, style-ui, geom, graph, roundtrip (+ conversion), export, ui-helpers, rounding, latex, asymptote, corpus |
+| `examples/` | three tkz-euclide figures, a plain-TikZ figure, an Asymptote figure (`.asy`) |
+| `docs/assumptions.md` | Verified semantics (tkz-euclide and Asymptote), open assumptions, design choices |
 
 ## Decisions to keep in mind
 
-- **Intersection order (verified):**
-  - `\tkzInterCC`: the first point is left of O1→O2.
-  - `\tkzInterLC`: the first point F has the centre on the left of F→S.
-  - When the line passes through the centre, F = O − r·û. LaTeX matched this in 4 tested
-    layouts, but it depends on rounding inside TeX.
-- **`\tkzDrawLine` is finite.** It extends 20% beyond each end, like LaTeX, not an infinite line.
-- **Using a point before defining it** is only a warning. Codegen reorders. "Copy code" then
-  exports the reordered version.
-- **Redefining a point name** is an error.
-- **Dragging regenerates the whole code** in canonical form and drops comments. A single
-  Ctrl+Z brings back the pre-drag text.
-- **Dragging is disabled while the code has errors**, so a drag can't overwrite text being typed.
-- **Diagnostics carry an optional `code`** (currently only `'forward-ref'`). The UI reacts to
-  it; don't match on message text.
+- **One model for all languages.** Every front end produces the same statements; the
+  construction set is "tkz-euclide shaped". Asymptote pair expressions with no tkz-euclide
+  counterpart become `expr` steps (numeric). Internal helper points have names starting with `~`
+  (hidden unless they are free points with numbers in the code).
+- **Intersection order is part of a construction** (`order`: `tkz`, `common`, `near`, `asy-y`,
+  `asy-path1`, `asy-path2`; `seg` for Asymptote segments). Converting picks names/indices from
+  the current positions so every point stays where it is; a later drag in the other language may
+  swap them, as it would in that program.
+- **Dragging rewrites numbers in place** (`Step.lit` spans; `ui/literal.ts`). Polar / `dir()`
+  points keep their radius. Repeated numeric TikZ coordinates are one point.
+- **Unknown commands are warnings**, not errors, so real files with one unsupported thing still
+  draw. Errors inside supported commands remain errors and keep the last valid figure.
+- **Using a point before defining it** is a warning; export reorders. Redefining a name is an
+  error in tkz-euclide; in Asymptote a reassigned variable gets a new point (the old one is
+  renamed internally).
+- **Conversions keep 6 decimals** for free points; canonical codegen otherwise uses 2.
+- **Diagnostics carry an optional `code`** (`'forward-ref'`, `'ignored'`). Don't match on text.
 
 ## Open items / possible next steps
 
 1. **GitHub housekeeping (needs you):** set the repo's default branch to `main`
    (Settings → General → Default branch). After that, the old branch
-   `claude/practical-feynman-f0m445` can be deleted; all of its commits are in `main` and `dev`.
-2. **Edit coordinates in place when dragging:** change only the numbers of the dragged
-   `\tkzDefPoint` in the source instead of regenerating everything. That would keep
-   comments and formatting.
-3. **Small command additions:** `\tkzDrawPoint`, `\tkzDrawLines`, `\tkzDrawCircles`,
-   `\tkzDrawPolygons`, `\tkzLabelPoint(A){text}`.
-4. **Two-point retrieval:** `\tkzGetFirstPoint` / `\tkzGetSecondPoint`, and the `common=` /
-   `near` options of `\tkzInterLC`/`\tkzInterCC`. The semantics are already read in
-   `tkz-tools-eu-intersections.tex`.
-5. **Expressions in coordinates** (`\tkzDefPoint(2*cos(30),1)`) and polar coordinates
-   (`(r:θ)`). Both are currently rejected with a clear error.
-6. **UI:** dark theme; show the coordinates of the hovered point in the status bar; select
-   a point from the code cursor position (not only mouse hover).
-7. **Bundle size:** the build warns about a chunk over 500 kB (CodeMirror). Code-splitting
-   would fix it if it matters.
+   `claude/practical-feynman-f0m445` can be deleted.
+2. **Arcs** (`\tkzDrawArc`, TikZ `arc`, Asymptote `arc`) are skipped with a warning. They are
+   the most common remaining unsupported drawing (GeoGebra angle markers).
+3. **Asymptote:** `point(path, t)`, `relpoint`, user functions and loops (skipped now).
+   `tests/asymptote.test.ts` is where any new function must be verified.
+4. **Labels** are plain text (subscripts, primes, a few symbols), not KaTeX.
+5. **Bundle size:** CodeMirror makes one chunk > 500 kB (the nagori integration lazy-loads it).
+6. **nagori-simulation** vendors this engine (`frontend/src/vendor/tikzgebra/`, refreshed with
+   `frontend/scripts/sync-tikzgebra.sh`); its page is a port of `src/ui/App.tsx`. When the
+   App's behaviour changes, port it there too.

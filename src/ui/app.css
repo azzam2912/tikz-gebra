@@ -209,6 +209,12 @@ body,
 .pt.free {
   cursor: move;
 }
+.pt.free.fixed {
+  cursor: default;
+}
+.pt.free.fixed .dot {
+  fill: var(--muted);
+}
 .pt.derived .dot {
   fill: var(--derived);
 }

@@ -31,9 +31,26 @@ describe('free points', () => {
   it('\\tkzDefPoints with comment lines inside', () => {
     expect(defs('\\tkzDefPoints{% x y name\n 0/0/A, % first\n 1/2/B}').map((c) => c.out[0])).toEqual(['A', 'B']);
   });
-  it('rejects expressions and polar coordinates', () => {
+  it('rejects expressions', () => {
     expect(errors('\\tkzDefPoint(2*3,1){A}')[0]!.message).toMatch(/numeric/);
-    expect(errors('\\tkzDefPoint(2:30){A}')[0]!.message).toMatch(/Polar/);
+    expect(errors('\\tkzDefPoint(a:30){A}')[0]!.message).toMatch(/numeric/);
+  });
+  it('polar coordinates (angle:radius)', () => {
+    const [c] = defs('\\tkzDefPoint(90:2){A}');
+    expect(c).toMatchObject({ op: 'free', out: ['A'], polar: true });
+    expect((c as { x: number }).x).toBeCloseTo(0);
+    expect((c as { y: number }).y).toBeCloseTo(2);
+  });
+  it('records the spans of the numbers for in-place editing', () => {
+    const src = '\\tkzDefPoint( 1.5 ,-2){A} \\tkzDefPoints{3/4/B} \\tkzDefPoint(75:1){C}';
+    const lits = parse(src).statements.map((st) => (st as DefStatement).lit!);
+    const txt = (sp: { from: number; to: number }) => src.slice(sp.from, sp.to);
+    expect(lits[0]).toMatchObject({ kind: 'xy' });
+    expect(lits.map((l) => (l.kind === 'xy' ? [txt(l.xs[0]!), txt(l.ys[0]!)] : [txt(l.spans[0]!), l.r]))).toEqual([
+      ['1.5', '-2'],
+      ['3', '4'],
+      ['75', 1],
+    ]);
   });
   it('rejects malformed \\tkzDefPoints item', () => {
     expect(errors('\\tkzDefPoints{0/0}')[0]!.message).toMatch(/x\/y\/name/);
@@ -105,8 +122,16 @@ describe('construction errors', () => {
   it('\\tkzGetPoints after a one-point command', () => {
     expect(errors('\\tkzInterLL(A,B)(C,D) \\tkzGetPoints{X}{Y}')[0]!.message).toMatch(/one point/);
   });
-  it('\\tkzGetFirstPoint is reported as unsupported', () => {
-    expect(errors('\\tkzInterLC(A,B)(O,C) \\tkzGetFirstPoint{X}')[0]!.message).toMatch(/not supported/);
+  it('\\tkzGetFirstPoint / \\tkzGetSecondPoint name one of the two points', () => {
+    const [a] = defs('\\tkzInterLC(A,B)(O,C) \\tkzGetFirstPoint{X}');
+    expect(a!.out[0]).toBe('X');
+    expect(a!.out[1]).toMatch(/^~/);
+    const [b] = defs('\\tkzInterCC(O,A)(P,B) \\tkzGetSecondPoint{Y}');
+    expect(b!.out[1]).toBe('Y');
+    expect(b!.out[0]).toMatch(/^~/);
+  });
+  it('\\tkzGetFirstPoint after a one-point command', () => {
+    expect(errors('\\tkzInterLL(A,B)(C,D) \\tkzGetFirstPoint{X}')[0]!.message).toMatch(/one point/);
   });
   it('stray \\tkzGetPoint', () => {
     expect(errors('\\tkzGetPoint{M}')[0]!.message).toMatch(/must directly follow/);
@@ -121,10 +146,12 @@ describe('construction errors', () => {
     expect(errors('\\tkzDefLine[parallel=through C] (A,B) \\tkzGetPoint{c}')[0]!.message).toMatch(/No space/);
   });
   it('unsupported options', () => {
-    expect(errors('\\tkzDefPointBy[rotation=center O angle 30](A) \\tkzGetPoint{B}')[0]!.message).toMatch(/projection/);
+    expect(errors('\\tkzDefPointBy[inversion=center O through A](B) \\tkzGetPoint{C}')[0]!.message).toMatch(/projection/);
+    expect(errors('\\tkzDefPointBy[homothety=center O ratio k](A) \\tkzGetPoint{B}')[0]!.message).toMatch(/number or a fraction/);
     expect(errors('\\tkzDefLine[mediator](A,B) \\tkzGetPoints{P}{Q}')[0]!.message).toMatch(/orthogonal/);
     expect(errors('\\tkzInterLC[R](A,B)(O,2) \\tkzGetPoints{P}{Q}')[0]!.message).toMatch(/not supported/);
-    expect(errors('\\tkzDefTriangleCenter[euler](A,B,C) \\tkzGetPoint{N}')[0]!.message).toMatch(/Unsupported triangle center/);
+    expect(errors('\\tkzDefTriangleCenter[nagel](A,B,C) \\tkzGetPoint{N}')[0]!.message).toMatch(/Unsupported triangle center/);
+    expect(errors('\\tkzInterCC[near](A,B)(C,D) \\tkzGetPoints{P}{Q}')[0]!.message).toMatch(/not supported/);
   });
   it('wrong number of points', () => {
     expect(errors('\\tkzDefMidPoint(A,B,C) \\tkzGetPoint{M}')[0]!.message).toMatch(/expects 2 points/);
@@ -186,18 +213,21 @@ describe('document handling', () => {
     expect(defs(src)).toHaveLength(1);
   });
   it('warns about tikzpicture options', () => {
-    const r = parse('\\begin{tikzpicture}[scale=2]\\end{tikzpicture}');
+    const r = parse('\\begin{tikzpicture}[rotate=30]\\end{tikzpicture}');
     expect(r.diagnostics).toMatchObject([{ severity: 'warning' }]);
+    // a uniform scale changes nothing in the preview
+    expect(parse('\\begin{tikzpicture}[scale=2]\\end{tikzpicture}').diagnostics).toEqual([]);
   });
-  it('reports unknown commands with their line number and keeps going', () => {
-    const r = parse('\\tkzDefPoint(0,0){A}\n\\tkzMarkAngle[size=1](A,B,C)\n\\tkzDefPoint(1,0){B}');
+  it('skips unknown commands with a warning (line number) and keeps going', () => {
+    const r = parse('\\tkzDefPoint(0,0){A}\n\\tkzFooBar[size=1](A,B,C)\n\\tkzDefPoint(1,0){B}');
     expect(r.diagnostics).toHaveLength(1);
-    expect(r.diagnostics[0]).toMatchObject({ severity: 'error', line: 2 });
-    expect(r.diagnostics[0]!.message).toMatch(/Unknown.*\\tkzMarkAngle/);
+    expect(r.diagnostics[0]).toMatchObject({ severity: 'warning', line: 2, code: 'ignored' });
+    expect(r.diagnostics[0]!.message).toMatch(/\\tkzFooBar.*ignored/);
     expect(r.statements).toHaveLength(2);
   });
-  it('reports \\foreach and \\def as unsupported', () => {
-    expect(errors('\\foreach \\i in {1,2}{\\tkzDefPoint(\\i,0){A}}')[0]!.message).toMatch(/\\foreach/);
+  it('reports \\def and \\foreach ranges as unsupported', () => {
+    expect(errors('\\foreach \\i in {1,...,5}{\\tkzDefPoint(\\i,0){A}}')[0]!.message).toMatch(/\\foreach/);
+    expect(errors('\\foreach \\i [count=\\k] in {A}{}')[0]!.message).toMatch(/\\foreach/);
     expect(errors('\\def\\x{2}')[0]!.message).toMatch(/\\def/);
   });
   it('reports stray text', () => {

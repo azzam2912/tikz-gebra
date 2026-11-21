@@ -2,7 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Evaluated } from '../geom/evaluate';
 import type { Vec } from '../geom/vec';
 import type { Graph, PointId } from '../graph/types';
-import { boundingBox, drawnPoints, labelsOf, shapesOf, type LabelPos, type Shape } from './shapes';
+import { isAux } from '../parser/ast';
+import { boundingBox, labelsOf, pointHandles, rightAnglePath, shapesOf, texRuns, type LabelSpec, type StyledShape } from './shapes';
 import { fitBox, gridStep, panBy, toMath, toScreen, zoomAt, type Viewport } from './viewport';
 
 import type { HoverTarget } from './hover';
@@ -123,8 +124,9 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
   };
 
   // ------------------------------------------------------------ rendering
-  const drawn = useMemo(() => (graph ? drawnPoints(graph) : new Set<PointId>()), [graph]);
   const S = useCallback((p: Vec) => toScreen(vp, p), [vp]);
+  const colors = graph?.colors ?? {};
+  const handles = useMemo(() => (graph ? pointHandles(graph, pos) : []), [graph, pos]);
 
   const hoveredStep = hover?.kind === 'step' ? hover.id : null;
   const hoveredDrawing = hover?.kind === 'drawing' ? hover.id : null;
@@ -146,7 +148,7 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
       >
         <Grid vp={vp} />
         {graph?.drawings.map((d) => {
-          const shapes = shapesOf(d, pos);
+          const shapes = shapesOf(d, pos, colors);
           if (shapes.length === 0) return null;
           const hot = hoveredDrawing === d.id;
           return (
@@ -157,48 +159,38 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
               onPointerLeave={() => !action.current && onHover(null)}
             >
               {shapes.map((s, i) => (
-                <ShapeView key={i} s={s} S={S} scale={vp.scale} />
+                <ShapeView key={i} s={s} S={S} vp={vp} hot={hot} />
               ))}
             </g>
           );
         })}
-        {graph?.steps.flatMap((step) =>
-          step.c.out.map((name) => {
-            const p = pos.get(name);
-            if (!p) return null;
-            const q = S(p);
-            const free = step.c.op === 'free';
-            const hot = hoveredStep === step.id || dragging === name;
-            const ghost = !drawn.has(name);
-            const r = free ? POINT_R_FREE : POINT_R_DERIVED;
-            return (
-              <g
-                key={name}
-                className={`pt ${free ? 'free' : 'derived'}${ghost ? ' ghost' : ''}${hot ? ' hot' : ''}`}
-                {...(free && onDrag ? { 'data-free-point': name } : {})}
-                onPointerEnter={() => !action.current && onHover({ kind: 'step', id: step.id })}
-                onPointerLeave={() => !action.current && onHover(null)}
-              >
-                {/* larger invisible hit area */}
-                <circle cx={q.x} cy={q.y} r={free ? 11 : 8} className="hit" />
-                <circle cx={q.x} cy={q.y} r={hot ? r + 2 : r} className="dot" />
-                {hot && (
-                  <text x={q.x + 10} y={q.y - 10} className="tip">
-                    {name}
-                    {free ? ` (${fmt2(p.x)}, ${fmt2(p.y)})` : ''}
-                  </text>
-                )}
-              </g>
-            );
-          }),
-        )}
+        {handles.map((h) => {
+          const q = S(h.at);
+          const hot = hoveredStep === h.stepId || dragging === h.name;
+          const r = h.free ? POINT_R_FREE : POINT_R_DERIVED;
+          const canDrag = h.draggable && !!onDrag;
+          return (
+            <g
+              key={h.name}
+              className={`pt ${h.free ? 'free' : 'derived'}${h.ghost ? ' ghost' : ''}${hot ? ' hot' : ''}${h.free && !canDrag ? ' fixed' : ''}`}
+              {...(canDrag ? { 'data-free-point': h.name } : {})}
+              onPointerEnter={() => !action.current && onHover({ kind: 'step', id: h.stepId })}
+              onPointerLeave={() => !action.current && onHover(null)}
+            >
+              {/* larger invisible hit area */}
+              <circle cx={q.x} cy={q.y} r={h.free ? 11 : 8} className="hit" />
+              <circle cx={q.x} cy={q.y} r={hot ? r + 2 : r} className="dot" />
+              {hot && (
+                <text x={q.x + 10} y={q.y - 10} className="tip">
+                  {isAux(h.name) ? '' : h.name}
+                  {h.free ? `${isAux(h.name) ? '' : ' '}(${fmt2(h.at.x)}, ${fmt2(h.at.y)})` : ''}
+                </text>
+              )}
+            </g>
+          );
+        })}
         {graph?.drawings.flatMap((d) =>
-          labelsOf(d, pos).map((l, i) => {
-            const q = S(l.at);
-            return (
-              <Label key={`${d.id}-${i}`} x={q.x} y={q.y} pos={l.pos} name={l.name} hot={hoveredDrawing === d.id} />
-            );
-          }),
+          labelsOf(d, pos, colors).map((l, i) => <Label key={`${d.id}-${i}`} l={l} S={S} hot={hoveredDrawing === d.id} />),
         )}
       </svg>
       <div className="legend">
@@ -212,7 +204,7 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
         </span>
         <span>
           <i style={{ width: 6, height: 6, background: 'var(--derived)', opacity: 0.45 }} />
-          not in \tkzDrawPoints
+          not drawn as a point
         </span>
       </div>
     </div>
@@ -221,63 +213,114 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
 
 const fmt2 = (n: number) => (Math.round(n * 100) / 100).toString();
 
-function ShapeView({ s, S }: { s: Shape; S: (p: Vec) => Vec; scale: number }) {
-  switch (s.type) {
-    case 'segment': {
-      const a = S(s.a);
-      const b = S(s.b);
-      return (
-        <>
-          <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="hit" />
-          <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="stroke" />
-        </>
-      );
+/** px per pt of line width, and the default width (tkz-euclide "thin" = 0.4pt → 1.4px). */
+const widthPx = (w: number | undefined) => (w === undefined ? undefined : 0.9 + w * 1.25);
+
+function strokeProps(s: StyledShape, hot: boolean): React.SVGProps<SVGElement> {
+  const st = s.style;
+  const props: React.SVGProps<SVGElement> & { style: React.CSSProperties } = { style: {} };
+  if (!hot) {
+    if (st.color) props.style.stroke = st.color;
+    if (st.noStroke || s.fillOnly) props.style.stroke = 'none';
+    const w = widthPx(st.width);
+    if (w !== undefined) props.style.strokeWidth = w;
+  }
+  if (st.dash) props.style.strokeDasharray = st.dash.map((d) => Math.max(d * 2.2, 1)).join(' ');
+  if (st.fill && (s.shape.type === 'polygon' || s.shape.type === 'circle')) {
+    props.style.fill = st.fill;
+    props.style.fillOpacity = st.fillOpacity ?? (s.fillOnly ? 1 : 1);
+  }
+  return props;
+}
+
+function ShapeView({ s, S, vp, hot }: { s: StyledShape; S: (p: Vec) => Vec; vp: Viewport; hot: boolean }) {
+  const sp = strokeProps(s, hot);
+  const sh = s.shape;
+  const pair = (d: string) => (
+    <>
+      <path d={d} className="hit" />
+      <path d={d} className="stroke" {...(sp as React.SVGProps<SVGPathElement>)} />
+    </>
+  );
+  const poly = (pts: Vec[], closed: boolean) => pts.map(S).map((p, i) => `${i ? 'L' : 'M'}${p.x},${p.y}`).join(' ') + (closed ? ' Z' : '');
+  switch (sh.type) {
+    case 'segment':
+    case 'tick': {
+      if (sh.type === 'tick') {
+        const a = S(sh.a);
+        const b = S(sh.b);
+        const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        const n = { x: (-(b.y - a.y) / l) * 5, y: ((b.x - a.x) / l) * 5 };
+        return pair(`M${m.x - n.x},${m.y - n.y} L${m.x + n.x},${m.y + n.y}`);
+      }
+      const a = S(sh.a);
+      const b = S(sh.b);
+      return pair(`M${a.x},${a.y} L${b.x},${b.y}`);
     }
-    case 'polygon': {
-      const d = s.pts.map(S).map((p, i) => `${i ? 'L' : 'M'}${p.x},${p.y}`).join(' ') + ' Z';
-      return (
-        <>
-          <path d={d} className="hit" />
-          <path d={d} className="stroke" />
-        </>
-      );
+    case 'line': {
+      // long enough to cross the whole view
+      const a = S(sh.a);
+      const b = S(sh.b);
+      const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const k = (vp.width + vp.height + Math.hypot(a.x - vp.width / 2, a.y - vp.height / 2) * 2) / l;
+      return pair(`M${a.x - (b.x - a.x) * k},${a.y - (b.y - a.y) * k} L${a.x + (b.x - a.x) * k},${a.y + (b.y - a.y) * k}`);
+    }
+    case 'polygon':
+      return pair(poly(sh.pts, true));
+    case 'polyline':
+      return pair(poly(sh.pts, false));
+    case 'rightAngle':
+      return pair(poly(rightAnglePath(sh), false));
+    case 'angle': {
+      const c = S(sh.b);
+      const r = sh.r * vp.scale;
+      const p1 = { x: c.x + r * Math.cos(sh.t1), y: c.y - r * Math.sin(sh.t1) };
+      const p2 = { x: c.x + r * Math.cos(sh.t2), y: c.y - r * Math.sin(sh.t2) };
+      const large = sh.t2 - sh.t1 > Math.PI ? 1 : 0;
+      return pair(`M${p1.x},${p1.y} A${r},${r} 0 ${large} 0 ${p2.x},${p2.y}`);
     }
     case 'circle': {
-      const c = S(s.c);
-      const r = Math.abs(S({ x: s.c.x + s.r, y: s.c.y }).x - c.x);
+      const c = S(sh.c);
+      const r = sh.r * vp.scale;
       return (
         <>
           <circle cx={c.x} cy={c.y} r={r} className="hit" />
-          <circle cx={c.x} cy={c.y} r={r} className="stroke" />
+          <circle cx={c.x} cy={c.y} r={r} className="stroke" {...(sp as React.SVGProps<SVGCircleElement>)} />
         </>
       );
     }
   }
 }
 
-/** Point label like LaTeX's $A$, with _x / _{xy} subscripts and primes. */
-function Label({ x, y, pos, name, hot }: { x: number; y: number; pos: LabelPos; name: string; hot: boolean }) {
-  const gap = 6;
-  const dx = pos.h === 'right' ? gap : pos.h === 'left' ? -gap : 0;
-  const dy = pos.v === 'above' ? -gap : pos.v === 'below' ? gap : 0;
-  const anchor = pos.h === 'right' ? 'start' : pos.h === 'left' ? 'end' : 'middle';
-  const baseline = pos.v === 'above' ? 'auto' : pos.v === 'below' ? 'hanging' : 'central';
-  const m = /^([^_]*)(?:_\{?([^}]*)\}?)?$/.exec(name);
-  const main = (m?.[1] ?? name).replace(/'/g, '′');
-  const sub = m?.[2];
+/** A label: TeX-ish text ($A_1$, $O'$, $15\dg$) placed in its direction from the point. */
+function Label({ l, S, hot }: { l: LabelSpec; S: (p: Vec) => Vec; hot: boolean }) {
+  const q = S(l.at);
+  let x = q.x;
+  let y = q.y;
+  let anchor: 'start' | 'middle' | 'end' = 'middle';
+  let baseline: 'auto' | 'hanging' | 'central' = 'central';
+  if (l.dir) {
+    const t = (l.dir.angle * Math.PI) / 180;
+    const c = Math.cos(t);
+    const s = Math.sin(t);
+    const gap = 4 + 3 * Math.min(Math.max(l.dir.k, 0.3), 3);
+    x += c * gap;
+    y -= s * gap;
+    anchor = c > 0.35 ? 'start' : c < -0.35 ? 'end' : 'middle';
+    baseline = s > 0.35 ? 'auto' : s < -0.35 ? 'hanging' : 'central';
+  }
+  const runs = texRuns(l.text);
   return (
-    <text
-      x={x + dx}
-      y={y + dy}
-      textAnchor={anchor}
-      dominantBaseline={baseline}
-      className={'label' + (hot ? ' hot' : '')}
-    >
-      {main}
-      {sub && (
-        <tspan className="sub" baselineShift="sub">
-          {sub.replace(/'/g, '′')}
-        </tspan>
+    <text x={x} y={y} textAnchor={anchor} dominantBaseline={baseline} className={'label' + (hot ? ' hot' : '')} style={!hot && l.color ? { fill: l.color } : undefined}>
+      {runs.map((r, i) =>
+        r.shift ? (
+          <tspan key={i} className="sub" baselineShift={r.shift}>
+            {r.text}
+          </tspan>
+        ) : (
+          <tspan key={i}>{r.text}</tspan>
+        ),
       )}
     </text>
   );

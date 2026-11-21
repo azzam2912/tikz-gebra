@@ -83,7 +83,7 @@ export function buildGraph(src: string, parsed: ParseResult): BuildResult {
     drawings.push({ id: '', d: st.d, span: st.span });
   }
   // canonical order (same as codegen): drawings first, then labels — stable otherwise
-  const isLabel = (d: Drawing) => d.d.cmd === 'tkzLabelPoints';
+  const isLabel = (d: Drawing) => d.d.cmd === 'tkzLabelPoints' || d.d.cmd === 'tkzLabelPoint';
   const ordered = [...drawings.filter((d) => !isLabel(d)), ...drawings.filter(isLabel)];
   ordered.forEach((d, i) => (d.id = `d${i}`));
 
@@ -92,11 +92,11 @@ export function buildGraph(src: string, parsed: ParseResult): BuildResult {
 
   const steps: Step[] = order.order.map((i) => {
     const st = defs[i]!;
-    return { id: stepId(st.c), c: st.c, span: st.span };
+    return { id: stepId(st.c), c: st.c, span: st.span, ...(st.lit ? { lit: st.lit } : {}) };
   });
   const producer = new Map<PointId, string>();
   for (const s of steps) for (const name of s.c.out) producer.set(name, s.id);
-  return { graph: { steps, producer, drawings: ordered }, diagnostics: diags };
+  return { graph: { steps, producer, drawings: ordered, ...(parsed.colors ? { colors: parsed.colors } : {}) }, diagnostics: diags };
 }
 
 /**

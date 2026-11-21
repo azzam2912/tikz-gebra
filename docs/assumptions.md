@@ -10,7 +10,7 @@ The source files that were read are named in each section, so every claim can be
 checked again.
 
 **Confirmed with real LaTeX.** `tests/latex.test.ts` compiles one document with
-pdflatex + tkz-euclide 5.06c. It contains the three examples and about 300 seeded
+pdflatex + tkz-euclide 5.06c. It contains the examples and about 480 seeded
 random configurations covering every supported construction. The test reads every
 point back with `\tkzGetPointCoord` and compares it with the preview engine. All of
 them agree, including the order of the two intersection points. The worst deviation
@@ -123,19 +123,90 @@ arguments is allowed, because TeX skips it there.
 - **Using a point before it is defined** is a *warning*, not an error. LaTeX would fail
   on it, but the graph is order-independent and the regenerated code puts definitions
   in dependency order. Real cycles are errors.
-- `\tkzGetPoint{..}` / `\tkzGetPoints{..}{..}` must **directly** follow their defining
-  command (only whitespace and comments in between). `\tkzGetFirstPoint` /
-  `\tkzGetSecondPoint` and the options `common=`, `near`, `R`, `with nodes` are not
-  supported yet.
-- **Only numeric literals** are accepted as coordinates: no expressions, no polar
-  `(r:θ)` coordinates.
+- `\tkzGetPoint{..}` / `\tkzGetPoints{..}{..}` / `\tkzGetFirstPoint{..}` /
+  `\tkzGetSecondPoint{..}` must **directly** follow their defining command (only whitespace
+  and comments in between). The point that isn't named gets an internal name (`~n`). The
+  options `R` and `with nodes` are not supported.
+- **Only numeric literals** are accepted in `\tkzDefPoint`: `(x,y)` or polar `(angle:r)`, no
+  expressions. Plain TikZ coordinates and radii also accept simple pgfmath (`{sqrt(13)/2}`),
+  but such numbers can't be rewritten by a drag.
 - **Point names** may use letters, digits, `_` and `'`.
-- **Options on drawing commands** are kept verbatim so they survive regeneration. Only
-  the label position (`above`, `below left`, …) affects the preview.
-- **Recognised and ignored:** `\documentclass`, `\usepackage`, `\begin/\end{document}`,
-  `\begin/\end{tikzpicture}`. Options on `tikzpicture` (`scale`, `rotate`, …) produce a
-  warning and are ignored. Everything else is an "unknown command" error.
-- **Canonical output:** definitions (topological order, one `\tkzDefPoint` per free
-  point), a blank line, drawings in source order, a blank line, `\tkzLabelPoints` in
-  source order. Comments and custom formatting are dropped. Coordinates are rounded to
-  2 decimals.
+- **Options on drawing commands** are kept verbatim so they survive regeneration. Colour,
+  dash, line width, fill and the label position are drawn; other keys are ignored.
+- **Recognised and ignored:** `\documentclass`, `\usepackage`, `\usetikzlibrary`,
+  `\tikzset`, `\tkzInit`/`\tkzClip`/`\tkzSetUp…`, `\clip`, size commands, and environments
+  such as `document`, `tikzpicture`, `center`, `scope`, `scriptsize`. `rotate`/`shift`/`xscale`
+  options on `tikzpicture`/`scope` give a warning (a uniform `scale` doesn't change the figure).
+  **Unknown commands are skipped with a warning** (code `ignored`), so a file with one
+  unsupported command still draws. Errors inside supported commands are still errors.
+- **Dragging** rewrites only the dragged point's numbers where they are written (2 decimals,
+  0.5 when snapping; polar points keep their radius and get a new angle, 0.01° or 5°).
+  Comments and formatting stay. A numeric TikZ coordinate written several times (GeoGebra)
+  is one point; all its occurrences change together.
+- **Canonical output** (export with forward references, conversion): definitions (topological
+  order, one `\tkzDefPoint` per free point), a blank line, drawings in source order, a blank
+  line, labels in source order. Comments and custom formatting are dropped. Coordinates are
+  rounded to 2 decimals; conversions keep up to 6 decimals.
+
+## Added after the MVP (verified against the sources and with real LaTeX)
+
+All of these are part of the random cases in `tests/latex.test.ts`.
+
+| Command | Source | Semantics |
+|---|---|---|
+| `\tkzDefPoint(a:r){A}` | TikZ polar coordinate | (r cos a, r sin a), degrees |
+| `[reflection=over A--B](P)` | `tkz-obj-eu-points-by.tex`, `\tkzUSymOrth` | mirror image of P in line AB |
+| `[symmetry=center C](P)` | `\tkzUCSym` | 2C − P |
+| `[homothety=center C ratio k](P)` | `\tkzUHomo`, ratio via `\pgfmathparse` | C + k(P − C); we accept a number or a fraction a/b |
+| `[rotation=center C angle a](P)` | `\tkzURotateAngle` | counter-clockwise by a degrees |
+| `[translation=from A to B](P)` | `\tkzUTranslation` | P + B − A |
+| `\tkzDefShiftPoint[A](x,y){B}` | `\path[shift={(A)}] (x,y)` | A + (x, y); also `(angle:r)` |
+| `\tkzDefLine[tangent at=C](O)` | `\tkzTgtAt` → `\tkz@VecKOrthNorm[-1](C,O)` | **C − rot90°ccw((O − C)/\|OC\|)**: 1 cm from C |
+| `\tkzDefMidArc(O,A,B)` | `tkz-draw-eu-angles.tex` | middle of the arc of radius \|OA\| from slope(O,A) to slope(O,B) after `\tkzNormalizeAngle` (if the first angle is > 0 and larger, subtract 360 from it; otherwise, if it is larger, add 360 to the second) |
+| `[ex](A,B,C)`, `\tkzExCenter(A,B,C)` | `\tkzExCenter(#1,#2,#3)` intersects the external bisectors at #1 and #3 | centre of the excircle **opposite the middle vertex B** |
+| `[euler](A,B,C)` | `\tkzEulerCenter` | nine-point centre = midpoint of O and H |
+| `\tkzCircumCenter`, `\tkzDefCircumCenter`, `\tkzInCenter`, `\tkzDefInCenter`, `\tkzOrthoCenter`, `\tkzCentroid` | `\let` aliases | same as the matching `\tkzDefTriangleCenter` |
+| `\tkzInterLC[common=X]`, `\tkzInterCC[common=X]` | `tkz-tools-eu-intersections.tex` | after the usual computation, the points are swapped unless the second is within 1 pt (LC) / 0.05 pt (CC) of X: **the second point is X, the first the other one** |
+| `\tkzInterLC[near](A,B)(O,C)` | same file | the first point is the one nearer to A |
+
+Plain TikZ: `($(A)!t!(B)$)` is the homothety of B with centre A and ratio t, `($(A)!(P)!(B)$)`
+the projection of P on AB. A `circle (r)` is drawn through a helper point r to the right of the
+centre. `\fill (A) circle (≤ 0.1cm)` is a dot, not a circle.
+
+## Asymptote (verified with real Asymptote 2.87)
+
+`tests/asymptote.test.ts` runs random figures and converted figures through `asy` (with
+`olympiad.asy` from `tests/asy/`) and compares every named point. `tests/corpus.test.ts` does the
+same for real figures. Read from `/usr/share/asymptote/geometry.asy`, `plain_pens.asy` and
+`olympiad.asy`:
+
+- **Which `circumcircle`.** With pair arguments, olympiad's `circumcircle(A,B,C)` / `incircle`
+  return a *path*; `circumcircle(triangle)`, `circle(A,B,C)` and `circle((point)O, r)` are
+  geometry *circle* objects; `circle(pair, r)` and `Circle(…)` are paths. If a file imports
+  `geometry` but not `olympiad`, `circumcircle(A,B,C)` is geometry's circle. With no import at
+  all we assume olympiad (AoPS snippets); ⚠ the user's own `asydef` may differ.
+- **Order of `intersectionpoints`** (measured on random configurations, then cross-checked):
+  - geometry `line`/`circle` objects (line–circle, circle–circle): the quadratic is solved
+    in y, so the points come by **ascending y** (ascending x for a horizontal line; for two
+    circles the line is their radical axis);
+  - with a path involved: by **time along the first path**. Circle paths start at angle 0
+    and run counter-clockwise; a segment `A--B` runs from A to B;
+  - `intersectionpoints(line, path)` orders by the path; `intersectionpoints(path, line)` does
+    not exist in Asymptote;
+  - **segments** (`A--B`, `segment(A,B)`) only keep intersection points that lie on them, so
+    `X[0]` may be the only point.
+- `excenter(A,B,C)` (geometry) is the centre of the excircle tangent to (AB), i.e. opposite C;
+  `excenter(t.BC)` is opposite A.
+- `perpendicular(M, line l)` is the line through M perpendicular to l.
+- `rightanglemark(A,B,C,s)` / `anglemark(A,B,C,t)`: size `s·markscalefactor` (default
+  8 · 0.03) in user units. The preview uses 0.24 units.
+- Named pens are taken from `plain_pens.asy` exactly (Asymptote's `purple` is (0.5,0,1), not
+  xcolor's). Pen variables are resolved by name.
+- `Drawing("A", P, dir)` / `MP("A", P, dir)` follow Evan Chen's cse5 definitions in `azzam.sty`
+  (dot + label `$A$`, default direction S).
+- Expressions that aren't a known construction become `expr` steps, evaluated with our
+  numeric evaluator (`src/asy/expr.ts`): complex products of pairs, transforms, `dir`, `unit`,
+  `abs`, trigonometry in radians (`sin`) or degrees (`Sin`).
+- Not supported: loops, `if`, function definitions (skipped with a warning), `point(path,t)`,
+  arcs, `?:`. A failed `draw`/`dot`/`label` is skipped with a warning; a failed definition is
+  an error.

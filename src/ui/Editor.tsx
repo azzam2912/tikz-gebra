@@ -1,8 +1,9 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory } from '@codemirror/commands';
 import { StreamLanguage, defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
+import { c as clike } from '@codemirror/legacy-modes/mode/clike';
 import { lintGutter, setDiagnostics, type Diagnostic as CmDiagnostic } from '@codemirror/lint';
-import { Annotation, EditorState, RangeSetBuilder, StateEffect, StateField, Transaction } from '@codemirror/state';
+import { Annotation, Compartment, EditorState, RangeSetBuilder, StateEffect, StateField, Transaction } from '@codemirror/state';
 import {
   Decoration,
   EditorView,
@@ -36,7 +37,12 @@ export interface EditorProps {
   highlight: Span[];
   /** Offset under the mouse, or null. */
   onHoverOffset: (offset: number | null) => void;
+  /** Syntax highlighting: TeX (tkz-euclide / TikZ) or Asymptote. */
+  language?: 'tex' | 'asy';
 }
+
+const languageConf = new Compartment();
+const modeOf = (l: 'tex' | 'asy' | undefined) => StreamLanguage.define(l === 'asy' ? clike : stex);
 
 const External = Annotation.define<boolean>();
 /** Marks drag edits that must be merged into the current undo event. */
@@ -104,7 +110,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
           highlightActiveLine(),
           history({ joinToEvent: (tr, adjacent) => adjacent || tr.annotation(DragJoin) === true }),
           keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
-          StreamLanguage.define(stex),
+          languageConf.of(modeOf(props.language)),
           syntaxHighlighting(defaultHighlightStyle),
           lintGutter(),
           highlightField,
@@ -199,6 +205,11 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
     });
     v.dispatch(setDiagnostics(v.state, ds));
   }, [props.diagnostics]);
+
+  // language
+  useEffect(() => {
+    view.current?.dispatch({ effects: languageConf.reconfigure(modeOf(props.language)) });
+  }, [props.language]);
 
   // hover highlight
   useEffect(() => {

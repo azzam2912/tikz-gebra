@@ -64,6 +64,35 @@ function randomCases(n: number): Case[] {
 \\tkzDefTriangleCenter[centroid](A,B,C) \\tkzGetPoint{G}
 \\tkzDefTriangleCenter[ortho](A,B,C) \\tkzGetPoint{K}`,
     });
+    const angle = fmt(r() * 360 - 180);
+    const radius = fmt(1 + r() * 4);
+    cases.push({
+      title: `random #${i} — transformations & more`,
+      code: `${pts}
+\\tkzDefPoint(${angle}:${radius}){E}
+\\tkzDefPointBy[reflection=over A--B](C) \\tkzGetPoint{R1}
+\\tkzDefPointBy[symmetry=center A](C) \\tkzGetPoint{R2}
+\\tkzDefPointBy[homothety=center A ratio 0.37](C) \\tkzGetPoint{R3}
+\\tkzDefPointBy[rotation=center B angle 47](C) \\tkzGetPoint{R4}
+\\tkzDefPointBy[translation=from A to B](C) \\tkzGetPoint{R5}
+\\tkzDefShiftPoint[A](1.3,-0.7){R6}
+\\tkzDefShiftPoint[B](40:1.5){R7}
+\\tkzDefLine[tangent at=C](A) \\tkzGetPoint{R8}
+\\tkzDefMidArc(A,B,C) \\tkzGetPoint{R9}
+\\tkzDefTriangleCenter[ex](A,B,C) \\tkzGetPoint{R10}
+\\tkzDefTriangleCenter[euler](A,B,C) \\tkzGetPoint{R11}
+\\tkzInCenter(A,B,C)\\tkzGetPoint{R12}
+\\tkzCircumCenter(A,B,C)\\tkzGetPoint{R13}
+\\tkzExCenter(A,B,C)\\tkzGetPoint{R14}`,
+    });
+    cases.push({
+      title: `random #${i} — common / near / first / second`,
+      code: `${pts}
+\\tkzInterLC[common=C](C,D)(A,C) \\tkzGetFirstPoint{P}
+\\tkzInterCC[common=C](A,C)(B,C) \\tkzGetFirstPoint{Q}
+\\tkzInterLC[near](A,B)(C,D) \\tkzGetPoints{S}{T}
+\\tkzInterCC(A,C)(B,D) \\tkzGetSecondPoint{U}`,
+    });
   }
   return cases;
 }
@@ -80,6 +109,19 @@ function robust(code: string): boolean {
   const C = P('C');
   const D = P('D');
   if (dist(A, B) < 1 || dist(C, D) < 1 || dist(A, C) < 1 || dist(B, C) < 1) return false;
+  if (code.includes('R13')) {
+    const area = Math.abs((B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x));
+    return area >= 4 && dist(A, C) > 1 && dist(B, C) > 1;
+  }
+  if (code.includes('common=')) {
+    // the second intersection must be clearly apart from the common point
+    const near = (n: string, m: string) => dist(P(n), P(m)) < 0.5;
+    if (near('P', 'C') || near('Q', 'C')) return false;
+    if (dist(P('S'), P('T')) < 0.5 || ['S', 'T', 'U'].some((n) => Math.abs(P(n).x) > 40)) return false;
+    // [near]: the two candidates must be at clearly different distances from A
+    if (Math.abs(dist(P('S'), A) - dist(P('T'), A)) < 0.3) return false;
+    return dist(A, B) > 1 && dist(C, D) > 1;
+  }
   if (code.includes('InterLC') || code.includes('InterCC')) {
     const pq = dist(P('P'), P('Q'));
     if (pq < 0.5) return false; // near-tangent: TeX's sqrt/acos lose precision
@@ -104,7 +146,7 @@ function runLatex(cases: Case[]): Map<string, Vec>[] {
   const body = cases
     .map((c, k) => {
       const g = compile(c.code).graph!;
-      const names = g.steps.flatMap((s) => s.c.out);
+      const names = g.steps.flatMap((s) => s.c.out).filter((n) => !n.startsWith('~'));
       const writes = names
         .map((n, i) => `\\tkzGetPointCoord(${n}){tmp}\\immediate\\write\\coords{${k} ${i} \\tmpx\\space\\tmpy}`)
         .join('\n');
@@ -130,7 +172,7 @@ ${body}
     if (!m) continue;
     const k = Number(m[1]);
     const g = compile(cases[k]!.code).graph!;
-    const name = g.steps.flatMap((s) => s.c.out)[Number(m[2])]!;
+    const name = g.steps.flatMap((s) => s.c.out).filter((n) => !n.startsWith('~'))[Number(m[2])]!;
     out[k]!.set(name, { x: Number(m[3]), y: Number(m[4]) });
   }
   return out;
@@ -148,14 +190,18 @@ describe.skipIf(!hasLatex())('agreement with real tkz-euclide (pdflatex)', () =>
           .map((f) => ({ title: `examples/${f}`, code: readFileSync(join(examplesDir, f), 'utf8') })),
         ...randomCases(150).filter((c) => robust(c.code)),
       ];
-      expect(cases.length).toBeGreaterThan(200);
+      expect(cases.length).toBeGreaterThan(400);
+      // every kind of random case must really be compared
+      for (const kind of ['interLC', 'interCC', 'lines & centres', 'transformations & more', 'common / near / first / second']) {
+        expect(cases.filter((c) => c.title.endsWith(kind)).length, kind).toBeGreaterThan(40);
+      }
       const latex = runLatex(cases);
       const failures: string[] = [];
       let worst = 0;
       cases.forEach((c, k) => {
         const ours = evaluate(compile(c.code).graph!);
         for (const [name, p] of ours) {
-          if (!p) continue;
+          if (!p || name.startsWith('~')) continue;
           const q = latex[k]!.get(name);
           if (!q) {
             failures.push(`${c.title}: LaTeX gave no value for ${name}`);
