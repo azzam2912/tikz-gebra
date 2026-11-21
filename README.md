@@ -29,7 +29,11 @@ npm test
 npm run build
 ```
 
-`npm test` runs the Vitest suite (parser, geometry, graph, round-trip, export). `npm run build`
+`npm test` runs the Vitest suite (parser, geometry, graph, round-trip, export). If
+`pdflatex` and tkz-euclide are installed, it also runs `tests/latex.test.ts`, which
+compiles about 300 constructions with real LaTeX and checks that the preview's
+coordinates match (`npm run test:latex` runs only that part). Without LaTeX that test
+is skipped. `npm run build`
 type-checks (strict) and produces a static build in `dist/`.
 
 ## Using it

@@ -9,6 +9,15 @@ please re-check the items marked ⚠.
 The source files that were read are named in each section, so every claim can be
 checked again.
 
+**Confirmed with real LaTeX.** `tests/latex.test.ts` compiles one document with
+pdflatex + tkz-euclide 5.06c. It contains the three examples and about 300 seeded
+random configurations covering every supported construction. The test reads every
+point back with `\tkzGetPointCoord` and compares it with the preview engine. All of
+them agree, including the order of the two intersection points. The worst deviation
+is ≈ 0.003 cm, which comes from TeX's fixed-point arithmetic. A deliberately swapped
+`\tkzInterCC` order makes the test fail, so the check is real. The test is skipped
+when `pdflatex` / `tkz-euclide.sty` are not installed.
+
 ## Verified against the source code
 
 ### `\tkzInterLC(A,B)(O,C) \tkzGetPoints{P}{Q}` — order of the two points
@@ -30,10 +39,12 @@ the point near Lb. There's a unit test for it.
 
 ⚠ **Line through the centre.** `\tkzInterLCR` sets Second = O + r·û (û = unit vector
 of B−A) and First = O − r·û. The angle test that follows is then ≈ 0° or ≈ 360°,
-depending on floating-point rounding, and the manual says that "you cannot compare the
-angles" in this case and recommends the `near` option. We assume no swap, i.e.
-**F = O − r·û**. LaTeX might give the opposite order. We use tkz-euclide's own
-threshold for "through the centre" (distance < 0.05 pt ≈ 0.00176 cm).
+depending on rounding, and the manual says that "you cannot compare the angles" in
+this case and recommends the `near` option. We use **F = O − r·û** (no swap). With
+pdflatex this matched in all four configurations tested (horizontal, reversed,
+diagonal, steep), but because it depends on rounding inside TeX, other inputs could
+still come out swapped. We use tkz-euclide's own threshold for "through the centre"
+(distance < 0.05 pt ≈ 0.00176 cm).
 
 ### `\tkzInterCC(O1,A)(O2,B) \tkzGetPoints{P}{Q}` — order of the two points
 Source: `\tkz@InterCC`, `\tkzInterCCR`.

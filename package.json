@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:latex": "vitest run tests/latex.test.ts",
     "typecheck": "tsc -b"
   },
   "dependencies": {
