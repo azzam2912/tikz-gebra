@@ -62,7 +62,7 @@ function asyIndexOfFirst(c: Extract<Construction, { op: 'interLC' | 'interCC' }>
   return pFirst ? 0 : 1;
 }
 
-function constructionAsy(c: Construction, name: (p: PointId) => string, opts: GenerateOptions): string[] {
+export function constructionAsy(c: Construction, name: (p: PointId) => string, opts: GenerateOptions): string[] {
   const a = c.args.map(name);
   const o = c.out.map(name);
   const decl = (e: string) => [`pair ${o[0]} = ${e};`];
@@ -178,7 +178,7 @@ function constructionAsy(c: Construction, name: (p: PointId) => string, opts: Ge
 const COMPASS = ['E', 'NE', 'N', 'NW', 'W', 'SW', 'S', 'SE'];
 const compassOf = (angle: number) => COMPASS[((Math.round(angle / 45) % 8) + 8) % 8]!;
 
-function drawingAsy(d: DrawingSpec, name: (p: PointId) => string, colors: Record<string, string>): string[] {
+export function drawingAsy(d: DrawingSpec, name: (p: PointId) => string, colors: Record<string, string>): string[] {
   const st = d.src === 'asy' ? asyStyle(d.options, colors) : tikzStyle(d.options, colors);
   const pen = d.src === 'asy' ? d.options : styleToAsyPen(st);
   const fillPen = d.src === 'asy' ? d.options : styleToAsyFill(st) ?? (st.color ? styleToAsyPen({ color: st.color }) : null);

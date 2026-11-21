@@ -14,6 +14,7 @@ import { asyNames, generateAsy } from '../src/codegen/asy';
 import { fmt } from '../src/codegen/codegen';
 import { evaluate } from '../src/geom/evaluate';
 import { compile } from '../src/pipeline';
+import { handlePick, initialState, TOOLS, type Target } from '../src/ui/tools';
 
 function hasAsy(): boolean {
   try {
@@ -149,6 +150,33 @@ describe.skipIf(!hasAsy())('agreement with real Asymptote', () => {
     },
     300_000,
   );
+
+  it('code written by every construction tool runs in Asymptote with the same points', () => {
+    let code = 'pair A = (0, 0), B = (4, 0), C = (1, 3);\ndraw(A--B--C--cycle);\ndraw(circle(A, abs(B - A)));\n';
+    const pt = (name: string): Target => ({ kind: 'point', name });
+    for (const t of TOOLS) {
+      if (t.id === 'move') continue;
+      const clicks: Target[] =
+        t.inputs === 'polygon'
+          ? [pt('A'), pt('B'), { kind: 'empty', at: { x: 3, y: 4 } }, pt('A')]
+          : t.id === 'intersect'
+            ? [pt('A'), pt('C'), pt('B'), pt('C')]
+            : t.inputs.flatMap((k, i) => (k === 'point' ? [pt('ABC'[i]!)] : [pt('A'), pt('B')]));
+      let s = initialState(t.id);
+      for (const c of clicks) {
+        const o = handlePick(s, c, code, 'asy', false);
+        s = o.state;
+        if (o.text !== undefined) code = o.text;
+      }
+    }
+    const res = compile(code, 'asy');
+    expect(res.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const pos = evaluate(res.graph!);
+    const names = res.graph!.steps.flatMap((st) => st.c.out).filter((n) => !n.startsWith('~') && pos.get(n));
+    expect(names.length).toBeGreaterThanOrEqual(20);
+    const real = runAsy(workdir(), code, names);
+    for (const n of names) expect(Math.hypot(pos.get(n)!.x - real.get(n)!.x, pos.get(n)!.y - real.get(n)!.y), n).toBeLessThan(1e-6);
+  }, 60_000);
 
   it('the Asymptote example', () => {
     const code = readFileSync(join(__dirname, '..', 'examples', 'nine-point-circle.asy'), 'utf8');

@@ -1,4 +1,4 @@
-import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory, redo, undo } from '@codemirror/commands';
 import { StreamLanguage, defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { c as clike } from '@codemirror/legacy-modes/mode/clike';
@@ -27,6 +27,9 @@ export interface EditorHandle {
   /** Move the cursor to a range and focus. */
   reveal(from: number, to: number): void;
   getText(): string;
+  /** Undo / redo the last change (same as Ctrl+Z / Ctrl+Shift+Z in the editor). */
+  undo(): void;
+  redo(): void;
 }
 
 export interface EditorProps {
@@ -189,6 +192,12 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
       },
       getText() {
         return view.current?.state.doc.toString() ?? '';
+      },
+      undo() {
+        if (view.current) undo(view.current);
+      },
+      redo() {
+        if (view.current) redo(view.current);
       },
     }),
     [],

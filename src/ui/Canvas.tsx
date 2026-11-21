@@ -7,6 +7,7 @@ import { boundingBox, labelsOf, pointHandles, rightAnglePath, shapesOf, texRuns,
 import { fitBox, gridStep, panBy, toMath, toScreen, zoomAt, type Viewport } from './viewport';
 
 import type { HoverTarget } from './hover';
+import type { Target } from './tools';
 
 export type { HoverTarget };
 
@@ -21,12 +22,17 @@ export interface CanvasProps {
   onDrag?: (name: PointId, p: Vec) => void;
   onDragStart?: (name: PointId) => void;
   onDragEnd?: () => void;
+  /** A construction tool is active: a click picks a point / object / spot instead of dragging. */
+  picking?: boolean;
+  onPick?: (t: Target) => void;
+  /** Points and drawings already picked by the active tool (highlighted). */
+  selected?: { points: PointId[]; drawings: string[] };
 }
 
 const POINT_R_FREE = 5.5;
 const POINT_R_DERIVED = 3.5;
 
-export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragStart, onDragEnd }: CanvasProps) {
+export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragStart, onDragEnd, picking, onPick, selected }: CanvasProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [vp, setVp] = useState<Viewport>({ cx: 0, cy: 0, scale: 50, width: 800, height: 600 });
@@ -72,7 +78,10 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
 
   // ------------------------------------------------------------ pointer: pan + drag
   const action = useRef<
-    { type: 'pan'; last: Vec; id: number } | { type: 'drag'; name: PointId; offset: Vec; id: number } | null
+    | { type: 'pan'; last: Vec; id: number }
+    | { type: 'drag'; name: PointId; offset: Vec; id: number }
+    | { type: 'click'; start: Vec; last: Vec; id: number; target: Element }
+    | null
   >(null);
   const [cursor, setCursor] = useState<'grab' | 'grabbing' | 'move' | 'default'>('grab');
 
@@ -85,7 +94,10 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
     if (e.button !== 0) return;
     const target = (e.target as Element).closest('[data-free-point]');
     const s = local(e);
-    if (target && onDrag) {
+    if (picking) {
+      // a click picks; moving more than a few pixels pans instead
+      action.current = { type: 'click', start: s, last: s, id: e.pointerId, target: e.target as Element };
+    } else if (target && onDrag) {
       const name = target.getAttribute('data-free-point')!;
       const p = pos.get(name);
       if (!p) return;
@@ -104,6 +116,13 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
     const a = action.current;
     if (!a || a.id !== e.pointerId) return;
     const s = local(e);
+    if (a.type === 'click') {
+      if (Math.hypot(s.x - a.start.x, s.y - a.start.y) > 4) {
+        action.current = { type: 'pan', last: a.last, id: a.id };
+        setCursor('grabbing');
+      } else a.last = s;
+      return;
+    }
     if (a.type === 'pan') {
       const dx = s.x - a.last.x;
       const dy = s.y - a.last.y;
@@ -121,6 +140,14 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
     action.current = null;
     setCursor('grab');
     if (a.type === 'drag') onDragEnd?.();
+    if (a.type === 'click' && onPick) {
+      const pt = a.target.closest('[data-point]');
+      const dr = a.target.closest('[data-drawing]');
+      const at = toMath(vp, a.start);
+      if (pt) onPick({ kind: 'point', name: pt.getAttribute('data-point')! });
+      else if (dr) onPick({ kind: 'drawing', id: dr.getAttribute('data-drawing')!, at });
+      else onPick({ kind: 'empty', at });
+    }
   };
 
   // ------------------------------------------------------------ rendering
@@ -139,7 +166,7 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
         className="canvas"
         width={vp.width}
         height={vp.height}
-        style={{ cursor }}
+        style={{ cursor: picking && cursor === 'grab' ? 'crosshair' : cursor }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endAction}
@@ -150,11 +177,13 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
         {graph?.drawings.map((d) => {
           const shapes = shapesOf(d, pos, colors);
           if (shapes.length === 0) return null;
-          const hot = hoveredDrawing === d.id;
+          const sel = !!selected?.drawings.includes(d.id);
+          const hot = hoveredDrawing === d.id || sel;
           return (
             <g
               key={d.id}
-              className={'drawing' + (hot ? ' hot' : '')}
+              data-drawing={d.id}
+              className={'drawing' + (hot ? ' hot' : '') + (sel ? ' sel' : '')}
               onPointerEnter={() => !action.current && onHover({ kind: 'drawing', id: d.id })}
               onPointerLeave={() => !action.current && onHover(null)}
             >
@@ -172,8 +201,9 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
           return (
             <g
               key={h.name}
-              className={`pt ${h.free ? 'free' : 'derived'}${h.ghost ? ' ghost' : ''}${hot ? ' hot' : ''}${h.free && !canDrag ? ' fixed' : ''}`}
-              {...(canDrag ? { 'data-free-point': h.name } : {})}
+              className={`pt ${h.free ? 'free' : 'derived'}${h.ghost ? ' ghost' : ''}${hot ? ' hot' : ''}${h.free && !canDrag ? ' fixed' : ''}${selected?.points.includes(h.name) ? ' sel' : ''}`}
+              data-point={h.name}
+              {...(canDrag && !picking ? { 'data-free-point': h.name } : {})}
               onPointerEnter={() => !action.current && onHover({ kind: 'step', id: h.stepId })}
               onPointerLeave={() => !action.current && onHover(null)}
             >

@@ -31,7 +31,7 @@ body,
 
 .app {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   height: 100%;
 }
 
@@ -81,6 +81,52 @@ body,
 .toast {
   font-size: 12px;
   color: var(--accent);
+}
+
+/* ------------------------------------------------------------------ tools */
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.tools .tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.tools .tool:hover {
+  border-color: var(--accent);
+}
+.tools .tool.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tools .tool.sep {
+  margin-left: 10px;
+}
+.tools span.sep {
+  width: 10px;
+}
+.tools .hint {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* ------------------------------------------------------------------ panes */
@@ -220,6 +266,14 @@ body,
 }
 .pt.ghost .dot {
   opacity: 0.45;
+}
+.pt.sel .dot {
+  fill: var(--hot);
+  opacity: 1;
+}
+.drawing.sel .stroke {
+  stroke: var(--hot);
+  stroke-width: 2.4;
 }
 .pt.hot .dot {
   fill: var(--hot);

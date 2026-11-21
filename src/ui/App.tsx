@@ -12,6 +12,8 @@ import { Canvas } from './Canvas';
 import { targetAt, type HoverTarget } from './hover';
 import { Editor, type EditorHandle } from './Editor';
 import { applyEdits, moveEdits } from './literal';
+import { ToolIcon } from './ToolIcons';
+import { TOOL_TEXT, TOOLS, handlePick, hintOf, initialState, selectionOf, type Target, type ToolState } from './tools';
 
 const PARSE_DEBOUNCE_MS = 150;
 
@@ -37,6 +39,7 @@ export function App() {
   }, []);
   const onCanvasHover = useCallback((t: HoverTarget) => setHoverFrom('canvas', t), [setHoverFrom]);
   const [snap, setSnap] = useState(false);
+  const [tool, setTool] = useState<ToolState>(initialState('move'));
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -82,6 +85,28 @@ export function App() {
     },
     [result.graph, code, snap, replaceCode],
   );
+
+  // ------------------------------------------------------------ construction tools
+  const picking = tool.tool !== 'move' && !hasErrors;
+  const onPick = useCallback(
+    (t: Target) => {
+      const current = editor.current?.getText() ?? code;
+      const out = handlePick(tool, t, current, lang, snap);
+      setTool(out.state);
+      if (out.text !== undefined) replaceCode(out.text);
+      if (out.undefinedPoints?.length) say(`${out.undefinedPoints.join(', ')}: not defined here (the objects don't meet)`);
+      else if (out.rejected) say(hintOf(tool));
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tool, code, lang, snap, replaceCode],
+  );
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTool((s) => initialState(s.tool));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // ------------------------------------------------------------ hover linking
   // Spans only match the editor text when the shown graph was parsed from it.
@@ -173,6 +198,28 @@ export function App() {
           Copy full document
         </button>
       </div>
+      <div className="tools">
+        {TOOLS.map((tl, i) => (
+          <button
+            key={tl.id}
+            className={`tool${tool.tool === tl.id ? ' active' : ''}${i > 0 && TOOLS[i - 1]!.group !== tl.group ? ' sep' : ''}`}
+            title={TOOL_TEXT[tl.id]}
+            aria-label={TOOL_TEXT[tl.id]}
+            aria-pressed={tool.tool === tl.id}
+            onClick={() => setTool(initialState(tl.id))}
+          >
+            <ToolIcon id={tl.id} />
+          </button>
+        ))}
+        <span className="sep" />
+        <button className="tool text" onClick={() => editor.current?.undo()} title="Undo (Ctrl+Z)">
+          ↶ Undo
+        </button>
+        <button className="tool text" onClick={() => editor.current?.redo()} title="Redo (Ctrl+Shift+Z)">
+          ↷ Redo
+        </button>
+        <span className="hint">{tool.tool === 'move' ? 'Move: drag free points, drag the canvas to pan.' : hintOf(tool)}</span>
+      </div>
       <div className="panes">
         <div className="left">
           <Editor
@@ -212,6 +259,9 @@ export function App() {
           onDragStart={() => editor.current?.beginBatch()}
           onDrag={hasErrors ? undefined : onDrag}
           onDragEnd={() => editor.current?.endBatch()}
+          picking={picking}
+          onPick={onPick}
+          selected={selectionOf(tool)}
         />
       </div>
     </div>

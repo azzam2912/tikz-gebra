@@ -6,7 +6,8 @@ the multi-language work below; merge only when the user asks).
 ## Status
 
 The MVP is complete, and the editor now reads **tkz-euclide, plain TikZ and Asymptote**, converts
-between tkz-euclide and Asymptote, and edits dragged points **in place**. There are 216 tests and
+between tkz-euclide and Asymptote, and edits dragged points **in place**. A GeoGebra-style tool row creates objects by clicking.
+There are 244 tests and
 strict `tsc` is clean.
 
 | Milestone | Contents | State |
@@ -18,6 +19,7 @@ strict `tsc` is clean.
 | M8 | Asymptote (olympiad/geometry): symbolic front end, Asymptote's intersection order, pens, cse5 helpers, GeoGebra exports | ✅ |
 | M9 | Conversion tkz-euclide ⇄ Asymptote, in-place drag, language picker, Asymptote highlighting | ✅ |
 | Extra | `tests/asymptote.test.ts`: random figures + conversions vs real Asymptote 2.87. `tests/corpus.test.ts`: real figures vs both programs | ✅ |
+| M10 | GeoGebra-style construction tools (21 tools, second toolbar row), Undo/Redo buttons, Esc to cancel; code written in the current language | ✅ |
 
 **Real-world check:** all 90 diagram files of
 [Geometry-Everyday-Project](https://github.com/azzam2912/Geometry-Everyday-Project) (34 Asymptote,
@@ -92,7 +94,7 @@ that installs TeX Live and runs `npm ci`. It doesn't install `asymptote` yet; ad
 | `src/geom/` | `constructions.ts` (all math, tkz + Asymptote ordering rules), `evaluate.ts`, `vec.ts` |
 | `src/codegen/` | `codegen.ts` (tkz-euclide, `fullDocument`, `nameMap`), `asy.ts` (Asymptote, `fullAsyDocument`, `extractAsyBody`), `export.ts` |
 | `src/style.ts` | TikZ/xcolor options and Asymptote pens ⇄ neutral `Style` |
-| `src/ui/` | `App.tsx`, `Editor.tsx` (language-aware highlighting), `Canvas.tsx`, pure helpers: `shapes.ts` (scene: styled shapes, labels, handles, TeX label text), `literal.ts` (in-place drag edits), `hover.ts`, `viewport.ts` |
+| `src/ui/` | `tools.ts` (construction tools: picks → constructions → code), `ToolIcons.tsx`, `App.tsx`, `Editor.tsx` (language-aware highlighting), `Canvas.tsx`, pure helpers: `shapes.ts` (scene: styled shapes, labels, handles, TeX label text), `literal.ts` (in-place drag edits), `hover.ts`, `viewport.ts` |
 | `src/pipeline.ts` | `detectLang`, `compile(src, lang)` |
 | `tests/` | parser, parser-extra, asy, style-ui, geom, graph, roundtrip (+ conversion), export, ui-helpers, rounding, latex, asymptote, corpus |
 | `examples/` | three tkz-euclide figures, a plain-TikZ figure, an Asymptote figure (`.asy`) |
@@ -119,6 +121,9 @@ that installs TeX Live and runs `npm ci`. It doesn't install `asymptote` yet; ad
 - **Diagnostics carry an optional `code`** (`'forward-ref'`, `'ignored'`). Don't match on text.
 
 ## Open items / possible next steps
+
+0. **Tools:** no delete tool yet (use Undo); no "point on object" (a click on an object with
+   the point tool makes a free point there); new points are labelled `above right` / `NE`.
 
 1. **GitHub housekeeping (needs you):** set the repo's default branch to `main`
    (Settings → General → Default branch). After that, the old branch

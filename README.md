@@ -59,6 +59,7 @@ Set `GEP_DIR=/path/to/Geometry-Everyday-Project` to run the corpus test on a who
 |---|---|
 | Edit | Type in the editor. It re-parses after 150 ms. On an error the last valid figure stays visible and the error is underlined and listed (click a message to jump to it). Unknown commands are skipped with a warning, so the rest still draws. |
 | Language | Detected automatically (`\begin{asy}`, `pair …;`, `draw(…)` → Asymptote). The menu forces one. |
+| Construct | Pick a tool in the second toolbar row (point, segment, line, polygon, perpendicular, parallel, perpendicular bisector, midpoint, intersection, foot, reflections, triangle centres, circles, incircle, angle marks) and click on the figure. Clicking an empty spot makes a new point; a line can be a clicked segment/side or two points. The code is written for you in the current language, before `\end{tikzpicture}` / `\end{asy}`. Esc cancels; Undo/Redo buttons. |
 | Move a point | Drag a **blue** (free) point. Grey free points have computed coordinates and can't be dragged. Derived points are smaller and dark; faded ones are not drawn as points by the figure itself. |
 | Snap | Rounds dragged coordinates to a 0.5 grid (polar points: 5°). Otherwise 2 decimals. |
 | Undo a drag | Ctrl+Z in the editor undoes a whole drag (and a conversion). |
@@ -135,7 +136,7 @@ code ──parse (tkz/TikZ or Asymptote)──▶ statements ──build──�
 | `src/geom/` | Pure math (`constructions.ts`) and the evaluator. Degenerate cases give `null` (hidden), never NaN. |
 | `src/codegen/` | Graph → tkz-euclide (`codegen.ts`) or Asymptote (`asy.ts`); body extraction for export. |
 | `src/style.ts` | TikZ options / Asymptote pens → one neutral style (and back). |
-| `src/ui/` | React: CodeMirror editor, SVG canvas, pure helpers (`shapes.ts`, `literal.ts`, `hover.ts`, …). |
+| `src/ui/` | React: CodeMirror editor, SVG canvas, pure helpers (`shapes.ts`, `literal.ts`, `tools.ts` for the construction tools, `hover.ts`, …). |
 
 Only free points (`op: 'free'`) carry coordinates. Every other node stores its operation
 and its parent point names. Codegen never flattens a derived point into numbers (except an
