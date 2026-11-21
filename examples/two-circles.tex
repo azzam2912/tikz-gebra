@@ -1,0 +1,18 @@
+% Two intersecting circles and their common chord
+\tkzDefPoint(0,0){O}
+\tkzDefPoint(2.5,0){A}
+\tkzDefPoint(3.5,1){O'}
+\tkzDefPoint(3.5,3.5){B}
+\tkzInterCC(O,A)(O',B) \tkzGetPoints{P}{Q}
+\tkzDefMidPoint(P,Q) \tkzGetPoint{M}
+
+\tkzDrawCircle(O,A)
+\tkzDrawCircle(O',B)
+\tkzDrawLine(O,O')
+\tkzDrawSegment(P,Q)
+\tkzDrawPoints(O,O',A,B,P,Q,M)
+
+\tkzLabelPoints[below left](O)
+\tkzLabelPoints[below right](O',A,B,M)
+\tkzLabelPoints[above](P)
+\tkzLabelPoints[below](Q)

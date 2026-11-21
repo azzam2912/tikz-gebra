@@ -1,0 +1,18 @@
+% Orthocenter H as the intersection of two altitudes
+\tkzDefPoint(0,0){A}
+\tkzDefPoint(6,0){B}
+\tkzDefPoint(1.5,4){C}
+\tkzDefPointBy[projection=onto B--C](A) \tkzGetPoint{H_a}
+\tkzDefPointBy[projection=onto A--C](B) \tkzGetPoint{H_b}
+\tkzDefPointBy[projection=onto A--B](C) \tkzGetPoint{H_c}
+\tkzInterLL(A,H_a)(B,H_b) \tkzGetPoint{H}
+
+\tkzDrawPolygon(A,B,C)
+\tkzDrawSegments(A,H_a B,H_b C,H_c)
+\tkzDrawPoints(A,B,C,H_a,H_b,H_c,H)
+
+\tkzLabelPoints[below](A,B,H_c)
+\tkzLabelPoints[above](C)
+\tkzLabelPoints[above right](H_a)
+\tkzLabelPoints[above left](H_b)
+\tkzLabelPoints[right](H)

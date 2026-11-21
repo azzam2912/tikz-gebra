@@ -1,0 +1,10 @@
+% Triangle ABC with its circumscribed circle
+\tkzDefPoints{0/0/A, 5/0/B, 1.5/3.5/C}
+\tkzDefTriangleCenter[circum](A,B,C) \tkzGetPoint{O}
+
+\tkzDrawCircle(O,A)
+\tkzDrawPolygon(A,B,C)
+\tkzDrawPoints(A,B,C,O)
+
+\tkzLabelPoints[below](A,B,O)
+\tkzLabelPoints[above](C)
