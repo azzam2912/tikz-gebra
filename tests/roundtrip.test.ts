@@ -46,6 +46,7 @@ const SAMPLES: Record<string, string> = {
 \\tkzInterLC[common=A](A,B)(C,A) \\tkzGetFirstPoint{X}
 \\tkzInterLC[near](A,B)(O,A) \\tkzGetPoints{Y}{Y'}
 \\tkzInterCC(A,C)(B,C) \\tkzGetSecondPoint{Z}
+\\tkzDefPointOnLine[pos=0.3](A,C) \\tkzGetPoint{L}
 \\tkzDrawSegment(A,B)
 \\tkzDrawSegments[dashed](A,C B,C)
 \\tkzDrawLine(C,c)
@@ -64,6 +65,11 @@ const SAMPLES: Record<string, string> = {
 \\tkzMarkSegment(A,M)
 \\tkzMarkSegments(A,M M,B)
 \\tkzLabelPoint[below](M){$M_{AB}$}
+\\tkzDrawArc[red](O,A)(B)
+\\tkzDrawSemiCircle(M,A)
+\\tkzDrawSector[fill=blue, fill opacity=0.3](A,B)(C)
+\\tkzFillSector[green](B,C)(A)
+\\tkzLabelAngle[dist=1.2](B,A,C){$\\alpha$}
 `,
   'plain TikZ and colours': `\\definecolor{wewdxt}{rgb}{0.43,0.42,0.45}
 \\coordinate[label=above:$A$] (A) at (0,3);

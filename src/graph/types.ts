@@ -1,6 +1,6 @@
-import type { Construction, DrawingSpec, Literal, PointId, SourceLang, Span } from '../parser/ast';
+import type { Construction, DrawingSpec, Literal, OptSpan, PointId, SourceLang, Span } from '../parser/ast';
 
-export type { Construction, DrawingSpec, Literal, PointId, Span };
+export type { Construction, DrawingSpec, Literal, OptSpan, PointId, Span };
 
 export interface Step {
   /** Stable id: the defined point name(s) joined by "+". */
@@ -16,6 +16,8 @@ export interface Drawing {
   id: string;
   d: DrawingSpec;
   span: Span | null;
+  /** Where its options / pen are written (in-place style edits). */
+  opt?: OptSpan;
 }
 
 export interface Graph {

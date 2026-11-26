@@ -5,7 +5,7 @@
 // become the matching construction; any other pair expression becomes an `expr` step that is
 // evaluated numerically. Literal pairs ((x,y), dir(a), r*dir(a)) are the draggable free points.
 
-import type { Construction, DefStatement, Diagnostic, DrawCmd, DrawingSpec, InterOrder, Literal, ParseResult, PointId, Span, Statement } from '../parser/ast';
+import type { Construction, DefStatement, Diagnostic, DrawCmd, DrawingSpec, InterOrder, Literal, OptSpan, ParseResult, PointId, Span, Statement } from '../parser/ast';
 import { makeLineIndex } from '../parser/parser';
 import { ASY_PEN_FUNCTIONS, ASY_PEN_WORDS } from '../style';
 import type { Expr, Stmt } from './ast';
@@ -28,10 +28,13 @@ type Val =
   | { t: 'tri'; v: [PointId, PointId, PointId] }
   | { t: 'arr'; items: Val[] }
   | { t: 'mark'; kind: 'right' | 'angle'; pts: [PointId, PointId, PointId] }
-  | { t: 'tr'; kind: 'rotate'; angle: number; c: Val | null }
+  /** arc(c, A, B): counter-clockwise around c from A towards B; `sector`: c--arc(…)(--cycle) */
+  | { t: 'arc'; c: PointId; a: PointId; b: PointId; sector?: 'open' | 'closed' }
+  /** `lit`: span of a literal angle / factor (dragging the image rewrites it) */
+  | { t: 'tr'; kind: 'rotate'; angle: number; c: Val | null; lit?: Span }
   | { t: 'tr'; kind: 'reflect'; a: PointId; b: PointId }
   | { t: 'tr'; kind: 'shift'; v: Val }
-  | { t: 'tr'; kind: 'scale'; k: number; c: Val | null }
+  | { t: 'tr'; kind: 'scale'; k: number; c: Val | null; lit?: Span }
   | { t: 'pen'; text: string }
   | { t: 'str'; v: string }
   | { t: 'void' };
@@ -181,8 +184,20 @@ class Front {
     return c.out[0];
   }
 
-  private draw(d: Omit<DrawingSpec, 'src'>, span: Span) {
-    this.statements.push({ type: 'draw', d: { ...d, src: 'asy' }, span, refSpans: d.groups.map((g) => g.map(() => span)) });
+  private draw(d: Omit<DrawingSpec, 'src'>, span: Span, opt?: OptSpan) {
+    this.statements.push({ type: 'draw', d: { ...d, src: 'asy' }, span, refSpans: d.groups.map((g) => g.map(() => span)), ...(opt ? { opt } : {}) });
+  }
+
+  /** Where argument `i` of a call is (or would be added before the closing parenthesis). */
+  private argOpt(e: Extract<Expr, { k: 'call' }>, arg: Expr | undefined): OptSpan | undefined {
+    if (arg) {
+      const i = e.args.indexOf(arg);
+      const prevEnd = i > 0 ? e.args[i - 1]!.span.to : arg.span.from;
+      return { span: arg.span, remove: { from: prevEnd, to: arg.span.to } };
+    }
+    const close = this.text.lastIndexOf(')', e.span.to);
+    if (close < e.span.from || !e.args.length) return undefined;
+    return { span: { from: close, to: close }, insert: 'arg' };
   }
 
   /** Give the point `name` (an internal name) the user's variable name `to`. */
@@ -479,6 +494,12 @@ class Front {
   private binary(e: Extract<Expr, { k: 'bin' }>): Val {
     if (e.op === '--' || e.op === '..') {
       const left = this.value(e.a);
+      // sectors: c--arc(c, A, B)--cycle
+      if (left.t === 'arc' && left.sector === 'open' && e.b.k === 'cycle') return { ...left, sector: 'closed' };
+      if (left.t === 'pt' || left.t === 'vec') {
+        const right = e.b.k === 'cycle' ? null : this.value(e.b);
+        if (right?.t === 'arc' && !right.sector && this.point(left, e.a.span) === right.c) return { ...right, sector: 'open' };
+      }
       const pts: PointId[] = left.t === 'path' ? [...left.pts] : [this.point(left, e.a.span)];
       if (left.t === 'path' && left.cycle) throw new Fail('Nothing can follow "cycle"', e.b.span);
       if (e.b.k === 'cycle') return { t: 'path', pts, cycle: true };
@@ -521,13 +542,15 @@ class Front {
     switch (tr.kind) {
       case 'rotate': {
         const c = tr.c ? this.point(tr.c, e.span) : this.origin(e.span);
-        return { t: 'pt', name: this.def({ op: 'rotation', args: [p, c], out: [this.freshAux()], angle: tr.angle }, e.span) };
+        const lit: Literal | undefined = tr.lit && tr.c ? { kind: 'param', spans: [tr.lit] } : undefined;
+        return { t: 'pt', name: this.def({ op: 'rotation', args: [p, c], out: [this.freshAux()], angle: tr.angle }, e.span, [], lit) };
       }
       case 'reflect':
         return { t: 'pt', name: this.def({ op: 'reflection', args: [p, tr.a, tr.b], out: [this.freshAux()] }, e.span) };
       case 'scale': {
         const c = tr.c ? this.point(tr.c, e.span) : this.origin(e.span);
-        return { t: 'pt', name: this.def({ op: 'homothety', args: [p, c], out: [this.freshAux()], k: tr.k }, e.span) };
+        const lit: Literal | undefined = tr.lit && tr.c ? { kind: 'param', spans: [tr.lit] } : undefined;
+        return { t: 'pt', name: this.def({ op: 'homothety', args: [p, c], out: [this.freshAux()], k: tr.k }, e.span, [], lit) };
       }
       case 'shift': {
         const d = tr.v;
@@ -620,8 +643,29 @@ class Front {
         const [a, b] = P(2);
         const t = args[2] ? this.value(args[2]) : null;
         if (t?.t !== 'num') throw new Fail('interp(A,B,t) needs a constant t', span);
-        if (near(t.v, 0.5)) return { t: 'pt', name: this.def({ op: 'midpoint', args: [a!, b!], out: [this.freshAux()] }, span) };
-        return { t: 'pt', name: this.def({ op: 'homothety', args: [b!, a!], out: [this.freshAux()], k: t.v }, span) };
+        // a literal t is the point's position along AB: dragging rewrites it
+        const lit: Literal | undefined = isNumLit(args[2]!) ? { kind: 'param', spans: [args[2]!.span] } : undefined;
+        return { t: 'pt', name: this.def({ op: 'onLine', args: [a!, b!], out: [this.freshAux()], t: t.v }, span, [], lit) };
+      }
+      case 'arc': {
+        // arc(c, z1, z2[, CCW]) or arc(c, r, angle1, angle2)
+        // the direction flag (CCW / CW / true / false) is checked by its text
+        const flag = (i: number) => (args[i] ? this.src(args[i]!.span).trim() : 'CCW');
+        const ccw = (i: number) => ['CCW', 'true'].includes(flag(i));
+        if (args.length < 3) throw new Fail('arc(c, A, B) expects a centre and two points', span);
+        const c = this.point(this.value(args[0]!), args[0]!.span);
+        const v1 = this.value(args[1]!);
+        if (v1.t === 'num') {
+          const v2 = args[2] ? this.value(args[2]) : null;
+          const v3 = args[3] ? this.value(args[3]) : null;
+          if (v2?.t !== 'num' || v3?.t !== 'num' || !ccw(4)) throw new Fail('Only arc(c, r, angle1, angle2) with constant numbers, counter-clockwise, is supported', span);
+          const r = v1.v;
+          const at = (deg: number) =>
+            this.def({ op: 'shift', args: [c], out: [this.freshAux()], dx: r * Math.cos((deg * Math.PI) / 180), dy: r * Math.sin((deg * Math.PI) / 180), polar: true }, span);
+          return { t: 'arc', c, a: at(v2.v), b: at(v3.v) };
+        }
+        if (!ccw(3)) throw new Fail('Clockwise arcs are not supported', span);
+        return { t: 'arc', c, a: this.point(v1, args[1]!.span), b: this.point(this.value(args[2]!), args[2]!.span) };
       }
       case 'line':
       case 'segment': {
@@ -713,7 +757,7 @@ class Front {
         const a = args[0] ? this.value(args[0]) : null;
         if (a?.t !== 'num') throw new Fail('rotate(angle, centre) needs a constant angle', span);
         const c = args[1] ? this.value(args[1]) : null;
-        return { t: 'tr', kind: 'rotate', angle: a.v, c };
+        return { t: 'tr', kind: 'rotate', angle: a.v, c, ...(isNumLit(args[0]!) ? { lit: args[0]!.span } : {}) };
       }
       case 'reflect': {
         const [a, b] = P(2);
@@ -726,7 +770,7 @@ class Front {
       case 'scale': {
         const k = args[0] ? this.value(args[0]) : null;
         if (k?.t !== 'num') throw new Fail('scale(k) needs a constant factor', span);
-        return { t: 'tr', kind: 'scale', k: k.v, c: args[1] ? this.value(args[1]) : null };
+        return { t: 'tr', kind: 'scale', k: k.v, c: args[1] ? this.value(args[1]) : null, ...(isNumLit(args[0]!) ? { lit: args[0]!.span } : {}) };
       }
       default:
         break;
@@ -833,12 +877,14 @@ class Front {
     }
     const stroke = e.fn !== 'fill';
     const items = shape.v.t === 'multi' ? shape.v.items : [shape.v];
-    for (const v of items) this.drawValue(v, stroke ? strokePen : null, fillPen, stroke, span);
+    // draw(…, pen) / fill(…, pen): the pen can be edited in place (one pen, one drawing)
+    const opt = e.fn !== 'filldraw' && pens.length <= 1 && items.length === 1 ? this.argOpt(e, pens[0]) : undefined;
+    for (const v of items) this.drawValue(v, stroke ? strokePen : null, fillPen, stroke, span, opt);
   }
 
-  private drawValue(v: Val, pen: string | null, fill: string | null, stroke: boolean, span: Span) {
-    const out = (cmd: DrawCmd, groups: PointId[][], extra: Partial<DrawingSpec> = {}) => this.draw({ cmd, options: pen, groups, ...extra }, span);
-    const fillOut = (cmd: DrawCmd, groups: PointId[][]) => this.draw({ cmd, options: fill, groups }, span);
+  private drawValue(v: Val, pen: string | null, fill: string | null, stroke: boolean, span: Span, opt?: OptSpan) {
+    const out = (cmd: DrawCmd, groups: PointId[][], extra: Partial<DrawingSpec> = {}) => this.draw({ cmd, options: pen, groups, ...extra }, span, opt);
+    const fillOut = (cmd: DrawCmd, groups: PointId[][]) => this.draw({ cmd, options: fill, groups }, span, opt);
     switch (v.t) {
       case 'path': {
         if (v.cycle) {
@@ -862,6 +908,13 @@ class Front {
         return;
       case 'mark':
         out(v.kind === 'right' ? 'tkzMarkRightAngle' : 'tkzMarkAngle', [[...v.pts]]);
+        return;
+      case 'arc':
+        if (v.sector === 'open') throw new Fail('A sector path c--arc(…) must end with --cycle', span);
+        if (v.sector === 'closed') {
+          if (fill) fillOut('tkzFillSector', [[v.c, v.a, v.b]]);
+          if (stroke) out('tkzDrawSector', [[v.c, v.a, v.b]]);
+        } else if (stroke) out('tkzDrawArc', [[v.c, v.a, v.b]]);
         return;
       default:
         throw new Fail(`Cannot draw ${describe(v)}`, span);
@@ -905,7 +958,7 @@ class Front {
     for (const tv of targets) {
       const p = this.point(tv, target.e.span);
       this.draw({ cmd: 'tkzDrawPoint', options: pen, groups: [[p]] }, span);
-      if (text !== null) this.draw({ cmd: 'tkzLabelPoint', options: dir ? this.src(vals[i]!.e.span) : null, groups: [[p]], text, dir }, span);
+      if (text !== null) this.draw({ cmd: 'tkzLabelPoint', options: dir ? this.src(vals[i]!.e.span) : null, groups: [[p]], text, dir }, span, targets.length === 1 ? this.argOpt(e, vals[i]?.e) : undefined);
     }
   }
 
@@ -921,14 +974,14 @@ class Front {
     const p = this.point(at.v, at.e.span);
     const dirArg = vals[2];
     const dir = this.direction(dirArg?.v);
-    this.draw({ cmd: 'tkzLabelPoint', options: dirArg ? this.src(dirArg.e.span) : null, groups: [[p]], text, dir }, span);
+    this.draw({ cmd: 'tkzLabelPoint', options: dirArg ? this.src(dirArg.e.span) : null, groups: [[p]], text, dir }, span, this.argOpt(e, dirArg?.e));
   }
 }
 
 // ------------------------------------------------------------------ helpers
 
 function describe(v: Val): string {
-  return { num: 'a number', real: 'a number', pt: 'a point', vec: 'a point', line: 'a line', circle: 'a circle', path: 'a path', multi: 'several paths', tri: 'a triangle', arr: 'an array', mark: 'an angle mark', tr: 'a transform', pen: 'a pen', str: 'a string', void: 'nothing' }[v.t];
+  return { num: 'a number', real: 'a number', pt: 'a point', vec: 'a point', line: 'a line', circle: 'a circle', path: 'a path', multi: 'several paths', tri: 'a triangle', arc: 'an arc', arr: 'an array', mark: 'an angle mark', tr: 'a transform', pen: 'a pen', str: 'a string', void: 'nothing' }[v.t];
 }
 
 function collectPts(e: Expr, out: Set<PointId>) {
@@ -967,6 +1020,8 @@ function renameVal(v: Val, from: PointId, to: PointId): Val {
       return { ...v, v: v.v.map(r) as [PointId, PointId, PointId] };
     case 'mark':
       return { ...v, pts: v.pts.map(r) as [PointId, PointId, PointId] };
+    case 'arc':
+      return { ...v, c: r(v.c), a: r(v.a), b: r(v.b) };
     case 'arr':
       return { ...v, items: v.items.map((x) => renameVal(x, from, to)) };
     case 'multi':

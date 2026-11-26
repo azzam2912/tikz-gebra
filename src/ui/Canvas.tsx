@@ -27,12 +27,19 @@ export interface CanvasProps {
   onPick?: (t: Target) => void;
   /** Points and drawings already picked by the active tool (highlighted). */
   selected?: { points: PointId[]; drawings: string[] };
+  /** Crossings of drawn objects a click can snap to (shown as small × marks). */
+  crossings?: Vec[];
+  /** Move mode: a click without dragging selects a point or a drawing (null = empty spot). */
+  onSelect?: (t: { kind: 'point'; name: PointId } | { kind: 'drawing'; id: string; at: Vec } | null) => void;
+  /** Shown over the canvas (the properties panel). */
+  overlay?: React.ReactNode;
 }
 
 const POINT_R_FREE = 5.5;
 const POINT_R_DERIVED = 3.5;
+const POINT_R_GLIDER = 4.5;
 
-export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragStart, onDragEnd, picking, onPick, selected }: CanvasProps) {
+export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragStart, onDragEnd, picking, onPick, selected, crossings, onSelect, overlay }: CanvasProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [vp, setVp] = useState<Viewport>({ cx: 0, cy: 0, scale: 50, width: 800, height: 600 });
@@ -78,8 +85,8 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
 
   // ------------------------------------------------------------ pointer: pan + drag
   const action = useRef<
-    | { type: 'pan'; last: Vec; id: number }
-    | { type: 'drag'; name: PointId; offset: Vec; id: number }
+    | { type: 'pan'; last: Vec; id: number; start?: Vec; target?: Element; moved?: boolean }
+    | { type: 'drag'; name: PointId; offset: Vec; id: number; moved?: boolean }
     | { type: 'click'; start: Vec; last: Vec; id: number; target: Element }
     | null
   >(null);
@@ -106,7 +113,8 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
       setCursor('move');
       onDragStart?.(name);
     } else {
-      action.current = { type: 'pan', last: s, id: e.pointerId };
+      // a pan that doesn't move is a click: it selects (move mode)
+      action.current = { type: 'pan', last: s, id: e.pointerId, start: s, target: e.target as Element };
       setCursor('grabbing');
     }
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
@@ -124,11 +132,13 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
       return;
     }
     if (a.type === 'pan') {
+      if (a.start && Math.hypot(s.x - a.start.x, s.y - a.start.y) > 4) a.moved = true;
       const dx = s.x - a.last.x;
       const dy = s.y - a.last.y;
       a.last = s;
       setVp((v) => panBy(v, dx, dy));
     } else {
+      a.moved = true;
       const m = toMath(vp, s);
       onDrag?.(a.name, { x: m.x + a.offset.x, y: m.y + a.offset.y });
     }
@@ -139,14 +149,27 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
     if (!a || a.id !== e.pointerId) return;
     action.current = null;
     setCursor('grab');
-    if (a.type === 'drag') onDragEnd?.();
+    if (a.type === 'drag') {
+      onDragEnd?.();
+      if (!a.moved) onSelect?.({ kind: 'point', name: a.name });
+    }
+    if (a.type === 'pan' && !a.moved && a.start && a.target && onSelect) {
+      const pt = a.target.closest('[data-point]');
+      const dr = a.target.closest('[data-drawing]');
+      if (pt) onSelect({ kind: 'point', name: pt.getAttribute('data-point')! });
+      else if (dr) onSelect({ kind: 'drawing', id: dr.getAttribute('data-drawing')!, at: toMath(vp, a.start) });
+      else onSelect(null);
+    }
     if (a.type === 'click' && onPick) {
       const pt = a.target.closest('[data-point]');
       const dr = a.target.closest('[data-drawing]');
       const at = toMath(vp, a.start);
+      // a click within 10 px of a crossing snaps to it; Shift puts the point on the object instead
+      const tol = 10 / vp.scale;
+      const shift = e.shiftKey;
       if (pt) onPick({ kind: 'point', name: pt.getAttribute('data-point')! });
-      else if (dr) onPick({ kind: 'drawing', id: dr.getAttribute('data-drawing')!, at });
-      else onPick({ kind: 'empty', at });
+      else if (dr) onPick({ kind: 'drawing', id: dr.getAttribute('data-drawing')!, at, tol, shift });
+      else onPick({ kind: 'empty', at, tol, shift });
     }
   };
 
@@ -196,19 +219,19 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
         {handles.map((h) => {
           const q = S(h.at);
           const hot = hoveredStep === h.stepId || dragging === h.name;
-          const r = h.free ? POINT_R_FREE : POINT_R_DERIVED;
+          const r = h.free ? POINT_R_FREE : h.glider ? POINT_R_GLIDER : POINT_R_DERIVED;
           const canDrag = h.draggable && !!onDrag;
           return (
             <g
               key={h.name}
-              className={`pt ${h.free ? 'free' : 'derived'}${h.ghost ? ' ghost' : ''}${hot ? ' hot' : ''}${h.free && !canDrag ? ' fixed' : ''}${selected?.points.includes(h.name) ? ' sel' : ''}`}
+              className={`pt ${h.free ? 'free' : 'derived'}${h.glider ? ' glider' : ''}${h.ghost ? ' ghost' : ''}${hot ? ' hot' : ''}${h.free && !canDrag ? ' fixed' : ''}${selected?.points.includes(h.name) ? ' sel' : ''}`}
               data-point={h.name}
               {...(canDrag && !picking ? { 'data-free-point': h.name } : {})}
               onPointerEnter={() => !action.current && onHover({ kind: 'step', id: h.stepId })}
               onPointerLeave={() => !action.current && onHover(null)}
             >
               {/* larger invisible hit area */}
-              <circle cx={q.x} cy={q.y} r={h.free ? 11 : 8} className="hit" />
+              <circle cx={q.x} cy={q.y} r={h.free || h.glider ? 11 : 8} className="hit" />
               <circle cx={q.x} cy={q.y} r={hot ? r + 2 : r} className="dot" />
               {hot && (
                 <text x={q.x + 10} y={q.y - 10} className="tip">
@@ -222,11 +245,20 @@ export function Canvas({ graph, pos, fitToken, hover, onHover, onDrag, onDragSta
         {graph?.drawings.flatMap((d) =>
           labelsOf(d, pos, colors).map((l, i) => <Label key={`${d.id}-${i}`} l={l} S={S} hot={hoveredDrawing === d.id} />),
         )}
+        {crossings?.map((c, i) => {
+          const q = S(c);
+          return <path key={`x${i}`} className="crossing" d={`M${q.x - 4},${q.y - 4} L${q.x + 4},${q.y + 4} M${q.x - 4},${q.y + 4} L${q.x + 4},${q.y - 4}`} />;
+        })}
       </svg>
+      {overlay}
       <div className="legend">
         <span>
           <i style={{ width: 9, height: 9, background: 'var(--free)' }} />
           free (drag)
+        </span>
+        <span>
+          <i style={{ width: 8, height: 8, background: 'var(--glider)' }} />
+          on an object (drag along it)
         </span>
         <span>
           <i style={{ width: 6, height: 6, background: 'var(--derived)' }} />
@@ -256,11 +288,23 @@ function strokeProps(s: StyledShape, hot: boolean): React.SVGProps<SVGElement> {
     if (w !== undefined) props.style.strokeWidth = w;
   }
   if (st.dash) props.style.strokeDasharray = st.dash.map((d) => Math.max(d * 2.2, 1)).join(' ');
-  if (st.fill && (s.shape.type === 'polygon' || s.shape.type === 'circle')) {
+  if (st.fill && (s.shape.type === 'polygon' || s.shape.type === 'circle' || (s.shape.type === 'arc' && s.shape.sector))) {
     props.style.fill = st.fill;
     props.style.fillOpacity = st.fillOpacity ?? (s.fillOnly ? 1 : 1);
   }
   return props;
+}
+
+/** SVG path of an arc around screen point c, radius r px, from t1 counter-clockwise to t2 (radians). */
+function arcPath(c: Vec, r: number, t1: number, t2: number): string {
+  const p1 = { x: c.x + r * Math.cos(t1), y: c.y - r * Math.sin(t1) };
+  const p2 = { x: c.x + r * Math.cos(t2), y: c.y - r * Math.sin(t2) };
+  if (t2 - t1 >= 2 * Math.PI - 1e-9) {
+    const m = { x: c.x - r * Math.cos(t1), y: c.y + r * Math.sin(t1) };
+    return `M${p1.x},${p1.y} A${r},${r} 0 1 0 ${m.x},${m.y} A${r},${r} 0 1 0 ${p1.x},${p1.y}`;
+  }
+  const large = t2 - t1 > Math.PI ? 1 : 0;
+  return `M${p1.x},${p1.y} A${r},${r} 0 ${large} 0 ${p2.x},${p2.y}`;
 }
 
 function ShapeView({ s, S, vp, hot }: { s: StyledShape; S: (p: Vec) => Vec; vp: Viewport; hot: boolean }) {
@@ -281,8 +325,15 @@ function ShapeView({ s, S, vp, hot }: { s: StyledShape; S: (p: Vec) => Vec; vp: 
         const b = S(sh.b);
         const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
         const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-        const n = { x: (-(b.y - a.y) / l) * 5, y: ((b.x - a.x) / l) * 5 };
-        return pair(`M${m.x - n.x},${m.y - n.y} L${m.x + n.x},${m.y + n.y}`);
+        const u = { x: (b.x - a.x) / l, y: (b.y - a.y) / l };
+        const n = { x: -u.y * 5, y: u.x * 5 };
+        const count = sh.n ?? 1;
+        const d = Array.from({ length: count }, (_, i) => {
+          const off = (i - (count - 1) / 2) * 3.2;
+          const c = { x: m.x + u.x * off, y: m.y + u.y * off };
+          return `M${c.x - n.x},${c.y - n.y} L${c.x + n.x},${c.y + n.y}`;
+        }).join(' ');
+        return pair(d);
       }
       const a = S(sh.a);
       const b = S(sh.b);
@@ -304,11 +355,14 @@ function ShapeView({ s, S, vp, hot }: { s: StyledShape; S: (p: Vec) => Vec; vp: 
       return pair(poly(rightAnglePath(sh), false));
     case 'angle': {
       const c = S(sh.b);
-      const r = sh.r * vp.scale;
-      const p1 = { x: c.x + r * Math.cos(sh.t1), y: c.y - r * Math.sin(sh.t1) };
-      const p2 = { x: c.x + r * Math.cos(sh.t2), y: c.y - r * Math.sin(sh.t2) };
-      const large = sh.t2 - sh.t1 > Math.PI ? 1 : 0;
-      return pair(`M${p1.x},${p1.y} A${r},${r} 0 ${large} 0 ${p2.x},${p2.y}`);
+      const count = sh.n ?? 1;
+      const d = Array.from({ length: count }, (_, i) => arcPath(c, sh.r * vp.scale + (i - (count - 1) / 2) * 3, sh.t1, sh.t2)).join(' ');
+      return pair(d);
+    }
+    case 'arc': {
+      const c = S(sh.c);
+      const d = arcPath(c, sh.r * vp.scale, sh.t1, sh.t2);
+      return pair(sh.sector ? `M${c.x},${c.y} L${d.slice(1)} Z` : d);
     }
     case 'circle': {
       const c = S(sh.c);

@@ -255,6 +255,9 @@ function binary(op: string, a: NumVal, b: NumVal): NumVal {
         return { x: (a.x * b.x + a.y * b.y) / d, y: (a.y * b.x - a.x * b.y) / d };
       }
       return null;
+    case '%':
+      // Asymptote: x % y = x − y·floor(x/y) (the result has the sign of y)
+      return typeof a === 'number' && typeof b === 'number' && b !== 0 ? a - b * Math.floor(a / b) : null;
     case '^':
       return typeof a === 'number' && typeof b === 'number' ? a ** b : null;
     default:

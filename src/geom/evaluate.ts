@@ -48,6 +48,9 @@ export function evaluate(g: Graph): Evaluated {
       case 'midpoint':
         set(midpoint(p[0]!, p[1]!));
         break;
+      case 'onLine':
+        set(dist(p[0]!, p[1]!) > 0 ? { x: p[0]!.x + c.t * (p[1]!.x - p[0]!.x), y: p[0]!.y + c.t * (p[1]!.y - p[0]!.y) } : null);
+        break;
       case 'projection':
         set(projection(p[0]!, p[1]!, p[2]!));
         break;

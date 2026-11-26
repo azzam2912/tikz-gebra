@@ -134,6 +134,54 @@ const ICONS: Record<ToolId, JSX.Element> = {
   ),
   rightAngle: <path d="M3 3v14h14M3 12h5v5" />,
   angleMark: <path d="M2 17L16 3M2 17h16M9 17a7 7 0 0 0-2-5" />,
+  tangent: (
+    <>
+      <circle cx="9" cy="11" r="6" />
+      <path d="M1 4.2L19 4.2" />
+      {dot(9, 5)}
+    </>
+  ),
+  arc: (
+    <>
+      <path d="M17 10a7 7 0 0 0-10.5-6" />
+      {dot(10, 10, 1.2)}
+      {dot(17, 10)}
+      {dot(6.5, 4)}
+    </>
+  ),
+  semicircle: (
+    <>
+      <path d="M3 14a7 7 0 0 1 14 0z" />
+      {dot(3, 14)}
+      {dot(17, 14)}
+    </>
+  ),
+  sector: (
+    <>
+      <path d="M4 16L18 16A14 14 0 0 0 13.9 6.1z" />
+      {dot(4, 16, 1.2)}
+    </>
+  ),
+  rotate: (
+    <>
+      <path d="M15 8a6 6 0 1 0 1.2 4.5" />
+      <path d="M15 3.5V8h-4.5" />
+      {dot(10, 10, 1.3)}
+    </>
+  ),
+  dilate: (
+    <>
+      <path d="M3 17l3.5-5h3zM3 17l11-14h6.5" strokeDasharray="0" />
+      <path d="M3 17l7.5-5" strokeDasharray="1.5 1" />
+      {dot(3, 17, 1.3)}
+    </>
+  ),
+  translate: (
+    <>
+      <path d="M2 15l4-8h4l-4 8z" strokeWidth="1" />
+      <path d="M8 12h8M13.5 9.5L16 12l-2.5 2.5" />
+    </>
+  ),
 };
 
 export function ToolIcon({ id, size = 18 }: { id: ToolId; size?: number }) {

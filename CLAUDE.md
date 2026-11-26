@@ -98,7 +98,8 @@ code ──parse (tkz/TikZ or asy)──▶ statements ──build──▶ Grap
 - **Construction tools** (`src/ui/tools.ts`) only emit constructions the engine already
   supports, through the normal code generators; `tests/tools.test.ts` runs every tool in both
   languages and `tests/asymptote.test.ts` runs their Asymptote output in real `asy`.
-- **Out of scope unless the user asks:** real LaTeX/Asymptote compilation in the app, arcs,
-  macros, loops (beyond `\foreach` over a list), 3D, deleting objects from the canvas.
+- **Out of scope unless the user asks:** real LaTeX/Asymptote compilation in the app, the other
+  arc forms (TikZ `arc`, `\tkzDrawArc[rotate|angles|R]`), macros, loops (beyond `\foreach` over a
+  list), 3D, deleting objects from the canvas.
 - **Keep `HANDOFF.md` up to date** when finishing a chunk of work (status, next steps, open
   questions).

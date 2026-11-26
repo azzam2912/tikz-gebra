@@ -12,6 +12,7 @@ import type {
   DrawStatement,
   InterArgs,
   Literal,
+  OptSpan,
   ParseResult,
   PointId,
   Severity,
@@ -138,6 +139,9 @@ function checkValue(p: Piece, what: string): number {
   throw new ParseError(`Only a number or a fraction a/b is supported as ${what} (got "${p.text}")`, p.span.from, Math.max(p.span.to, p.span.from + 1));
 }
 
+/** A plain number (not a fraction) can be rewritten in place when the point is dragged. */
+const isPlainNumber = (p: Piece) => NUMBER_RE.test(p.text);
+
 /** Parse a group's content as a comma-separated list of point names. */
 function nameList(g: Group, min: number, max: number, cmd: string): { names: PointId[]; spans: Span[] } {
   const pieces = splitTop(g.inner, g.innerFrom, ',');
@@ -194,7 +198,7 @@ const STYLE_CMDS: Record<string, string> = {
 };
 
 /** Fill-in for \tkzDrawCircle[R] and friends: commands we parse but don't draw. */
-const IGNORED_DRAW_CMDS = new Set(['tkzMarkAngles', 'tkzLabelAngle', 'tkzLabelAngles', 'tkzLabelSegment', 'tkzLabelSegments', 'tkzLabelLine', 'tkzLabelCircle', 'tkzFillAngle', 'tkzFillAngles', 'tkzDrawArc', 'tkzDrawSector', 'tkzDrawSemiCircle', 'tkzDrawSemiCircles', 'tkzMarkArc', 'tkzPicAngle', 'tkzPicRightAngle']);
+const IGNORED_DRAW_CMDS = new Set(['tkzMarkAngles', 'tkzLabelAngles', 'tkzLabelSegment', 'tkzLabelSegments', 'tkzLabelLine', 'tkzLabelCircle', 'tkzFillAngle', 'tkzFillAngles', 'tkzDrawSemiCircles', 'tkzMarkArc', 'tkzPicAngle', 'tkzPicRightAngle']);
 
 const COLOR_MODELS: Record<string, (v: number[]) => string | null> = {
   rgb: (v) => (v.length === 3 ? rgbCss(v[0]!, v[1]!, v[2]!) : null),
@@ -413,6 +417,8 @@ class Parser {
       }
       case 'tkzDefPointBy':
         return this.defPointBy(t);
+      case 'tkzDefPointOnLine':
+        return this.defPointOnLine(t);
       case 'tkzDefLine':
         return this.defLine(t);
       case 'tkzInterLL': {
@@ -489,6 +495,14 @@ class Parser {
         return this.draw(t, name, 3, 3);
       case 'tkzDrawPoint':
         return this.draw(t, name, 1, 1);
+      case 'tkzDrawSemiCircle':
+        return this.draw(t, name, 2, 2);
+      case 'tkzDrawArc':
+      case 'tkzDrawSector':
+      case 'tkzFillSector':
+        return this.drawArc(t, name);
+      case 'tkzLabelAngle':
+        return this.labelAngle(t);
       case 'tkzDrawPoints':
       case 'tkzLabelPoints':
         return this.draw(t, name, 1, Infinity);
@@ -719,6 +733,7 @@ class Parser {
     };
     let make: (p: PointId, out: PointId[]) => Construction;
     let spans: Span[];
+    let param: Span | null = null;
     let m: RegExpExecArray | null;
     if ((m = /^\s*projection\s*=\s*onto\s+(\S+?)\s*--\s*(\S+?)\s*$/d.exec(inner)) || (m = /^\s*reflection\s*=\s*over\s+(\S+?)\s*--\s*(\S+?)\s*$/d.exec(inner))) {
       const op = inner.trim().startsWith('projection') ? 'projection' : 'reflection';
@@ -736,15 +751,19 @@ class Parser {
     } else if ((m = /^\s*homothety\s*=\s*center\s+(\S+?)\s+ratio\s+(.+?)\s*$/d.exec(inner))) {
       const pc = piece(m, 1);
       const c = checkName(pc);
-      const k = checkValue(piece(m, 2), 'homothety ratio');
+      const kp = piece(m, 2);
+      const k = checkValue(kp, 'homothety ratio');
       make = (p, out) => ({ op: 'homothety', args: [p, c], out: out as [string], k });
       spans = [pc.span];
+      if (isPlainNumber(kp)) param = kp.span;
     } else if ((m = /^\s*rotation\s*=\s*center\s+(\S+?)\s+angle\s+(.+?)\s*$/d.exec(inner))) {
       const pc = piece(m, 1);
       const c = checkName(pc);
-      const angle = checkValue(piece(m, 2), 'rotation angle');
+      const ap = piece(m, 2);
+      const angle = checkValue(ap, 'rotation angle');
       make = (p, out) => ({ op: 'rotation', args: [p, c], out: out as [string], angle });
       spans = [pc.span];
+      if (isPlainNumber(ap)) param = ap.span;
     } else if ((m = /^\s*translation\s*=\s*from\s+(\S+?)\s+to\s+(\S+?)\s*$/d.exec(inner))) {
       const pa = piece(m, 1);
       const pb = piece(m, 2);
@@ -761,7 +780,26 @@ class Parser {
     }
     const g = this.readGroup('(', 'forbid', 'tkzDefPointBy');
     const p = nameList(g, 1, 1, 'tkzDefPointBy');
-    this.finishDef(t, (out) => make(p.names[0]!, out), [p.spans[0]!, ...spans], 1);
+    this.finishDef(t, (out) => make(p.names[0]!, out), [p.spans[0]!, ...spans], 1, param ? { kind: 'param', spans: [param] } : undefined);
+  }
+
+  /** \tkzDefPointOnLine[pos=t](A,B): A + t(B − A). */
+  private defPointOnLine(t: CmdToken) {
+    const opt = this.readGroup('[', 'allow', 'tkzDefPointOnLine');
+    const m = /^\s*pos\s*=\s*(.+?)\s*$/d.exec(opt.inner);
+    if (!m) throw new ParseError('\\tkzDefPointOnLine expects [pos=t]', opt.from, opt.to);
+    const [s0, e0] = m.indices![1]!;
+    const tp: Piece = { text: m[1]!, span: { from: opt.innerFrom + s0, to: opt.innerFrom + e0 } };
+    const tv = checkValue(tp, 'position');
+    const g = this.readGroup('(', 'forbid', 'tkzDefPointOnLine');
+    const l = nameList(g, 2, 2, 'tkzDefPointOnLine');
+    this.finishDef(
+      t,
+      (out) => ({ op: 'onLine', args: [l.names[0]!, l.names[1]!], out: out as [string], t: tv }),
+      l.spans,
+      1,
+      isPlainNumber(tp) ? { kind: 'param', spans: [tp.span] } : undefined,
+    );
   }
 
   private defLine(t: CmdToken) {
@@ -798,7 +836,7 @@ class Parser {
   }
 
   /** Read the mandatory \tkzGetPoint{..} / \tkzGetPoints{..}{..} that follows a definition. */
-  private finishDef(t: CmdToken, make: (out: PointId[]) => Construction, argSpans: Span[], count: 1 | 2) {
+  private finishDef(t: CmdToken, make: (out: PointId[]) => Construction, argSpans: Span[], count: 1 | 2, lit?: Literal) {
     const defName = t.name;
     const want = count === 1 ? 'tkzGetPoint' : 'tkzGetPoints';
     const hint = count === 1 ? '\\tkzGetPoint{M}' : '\\tkzGetPoints{P}{Q}';
@@ -837,7 +875,7 @@ class Parser {
     if (count === 2 && names[0] === names[1]) {
       throw new ParseError(`Both intersection points are named "${names[0]}"`, outs[1]!.span.from, outs[1]!.span.to);
     }
-    this.pushDef(make(names), { from: t.from, to: end }, argSpans, outSpans);
+    this.pushDef(make(names), { from: t.from, to: end }, argSpans, outSpans, lit);
   }
 
   private pushDef(c: Construction, span: Span, argSpans: Span[], outSpans: Span[], lit?: Literal) {
@@ -847,11 +885,52 @@ class Parser {
 
   // ---------------------------------------------------------------- drawings
 
+  /** Where the [options] of a tkz command are (or would go). */
+  private optSpan(t: CmdToken, opt: Group | null): OptSpan {
+    if (opt) return { span: { from: opt.innerFrom, to: opt.innerFrom + opt.inner.length }, remove: { from: opt.from, to: opt.to } };
+    return { span: { from: t.to, to: t.to }, insert: 'bracket' };
+  }
+
   private draw(t: CmdToken, cmd: DrawCmd, min: number, max: number) {
     const opt = this.optGroup();
     const g = this.readGroup('(', opt ? 'forbid' : 'allow', cmd);
     const l = nameList(g, min, max, cmd);
-    this.pushDraw({ cmd, options: opt ? opt.inner.trim() : null, groups: [l.names] }, { from: t.from, to: g.to }, [l.spans]);
+    this.pushDraw({ cmd, options: opt ? opt.inner.trim() : null, groups: [l.names] }, { from: t.from, to: g.to }, [l.spans], this.optSpan(t, opt));
+  }
+
+  /** \tkzDrawArc(O,A)(B), \tkzDrawSector(O,A)(B), \tkzFillSector(O,A)(B): only the default "towards" form. */
+  private drawArc(t: CmdToken, cmd: DrawCmd) {
+    const opt = this.optGroup();
+    const g1 = this.readGroup('(', opt ? 'forbid' : 'allow', cmd);
+    const g2 = this.readGroup('(', 'forbid', cmd);
+    const other = opt?.inner.match(/(?:^|,)\s*(rotate|angles|R with nodes|R|type\s*=\s*(?!towards)[^,]*)\s*(?=,|$)/);
+    if (other) {
+      this.diag('warning', `\\${cmd}[${other[1]!.trim()}] is not drawn by the preview (only the default "towards" form is)`, t.from, g2.to, 'ignored');
+      return;
+    }
+    const l1 = nameList(g1, 2, 2, cmd);
+    const l2 = nameList(g2, 1, 1, cmd);
+    this.pushDraw(
+      { cmd, options: opt ? opt.inner.trim() : null, groups: [[...l1.names, ...l2.names]] },
+      { from: t.from, to: g2.to },
+      [[...l1.spans, ...l2.spans]],
+      this.optSpan(t, opt),
+    );
+  }
+
+  /** \tkzLabelAngle[dist=d](A,B,C){text} */
+  private labelAngle(t: CmdToken) {
+    const cmd = 'tkzLabelAngle';
+    const opt = this.optGroup();
+    const g = this.readGroup('(', opt ? 'forbid' : 'allow', cmd);
+    const l = nameList(g, 3, 3, cmd);
+    const tg = this.readGroup('{', 'allow', cmd);
+    this.pushDraw(
+      { cmd, options: opt ? opt.inner.trim() : null, groups: [l.names], text: tg.inner.trim() },
+      { from: t.from, to: tg.to },
+      [l.spans],
+      this.optSpan(t, opt),
+    );
   }
 
   private labelPoint(t: CmdToken) {
@@ -864,6 +943,7 @@ class Parser {
       { cmd, options: opt ? opt.inner.trim() : null, groups: [l.names], text: tg.inner.trim() },
       { from: t.from, to: tg.to },
       [l.spans],
+      this.optSpan(t, opt),
     );
   }
 
@@ -887,11 +967,11 @@ class Parser {
       groups.push(parts.map(checkName));
       refSpans.push(parts.map((p) => p.span));
     }
-    this.pushDraw({ cmd, options: opt ? opt.inner.trim() : null, groups }, { from: t.from, to: g.to }, refSpans);
+    this.pushDraw({ cmd, options: opt ? opt.inner.trim() : null, groups }, { from: t.from, to: g.to }, refSpans, this.optSpan(t, opt));
   }
 
-  private pushDraw(d: DrawingSpec, span: Span, refSpans: Span[][]) {
-    const st: DrawStatement = { type: 'draw', d, span, refSpans };
+  private pushDraw(d: DrawingSpec, span: Span, refSpans: Span[][], opt?: OptSpan) {
+    const st: DrawStatement = { type: 'draw', d, span, refSpans, ...(opt ? { opt } : {}) };
     this.statements.push(st);
   }
 
@@ -1058,12 +1138,14 @@ class Parser {
     let text = body.text;
     let from = body.from;
     let options: string | null = null;
+    let optAt: OptSpan = { span: { from: t.to, to: t.to }, insert: 'bracket' };
     const lead = /^\s*\[/.exec(text);
     if (lead) {
       const open = lead[0].length - 1;
       const close = matching(text, open);
       if (close < 0) throw new ParseError(`Unclosed "[" in \\${t.name}`, from + open, from + open + 1);
       options = text.slice(open + 1, close).trim();
+      optAt = { span: { from: from + open + 1, to: from + close }, remove: { from: from + open, to: from + close + 1 } };
       text = text.slice(close + 1);
       from += close + 1;
     }
@@ -1094,7 +1176,7 @@ class Parser {
         let cmd: DrawCmd;
         if (closed) cmd = stroke ? 'tkzDrawPolygon' : 'tkzFillPolygon';
         else cmd = run.length === 2 ? 'tkzDrawSegment' : 'tkzDrawPolySeg';
-        this.pushDraw({ cmd, options: opts, groups: [names], src: 'tikz' }, span, [refs]);
+        this.pushDraw({ cmd, options: opts, groups: [names], src: 'tikz' }, span, [refs], t.name === 'fill' ? undefined : optAt);
       }
       run = [];
     };
@@ -1125,7 +1207,7 @@ class Parser {
           } else {
             const through = this.aux();
             this.pushDef({ op: 'shift', args: [prev], out: [through], dx: it.r, dy: 0 }, it.span, [it.span], [it.span]);
-            this.pushDraw({ cmd: stroke ? 'tkzDrawCircle' : 'tkzFillCircle', options: opts, groups: [[prev, through]], src: 'tikz' }, span, [[it.span, it.span]]);
+            this.pushDraw({ cmd: stroke ? 'tkzDrawCircle' : 'tkzFillCircle', options: opts, groups: [[prev, through]], src: 'tikz' }, span, [[it.span, it.span]], t.name === 'fill' ? undefined : optAt);
           }
           break;
         }

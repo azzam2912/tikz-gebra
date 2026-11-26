@@ -83,7 +83,7 @@ export function lex(src: string, base: number): Tok[] {
 
 const BIN_PREC: Record<string, number> = {
   '||': 1, '&&': 2, '==': 3, '!=': 3, '<': 4, '>': 4, '<=': 4, '>=': 4,
-  '^^': 5, '--': 6, '..': 6, '+': 7, '-': 7, '*': 8, '/': 8,
+  '^^': 5, '--': 6, '..': 6, '+': 7, '-': 7, '*': 8, '/': 8, '%': 8,
 };
 
 export interface AsyParse {

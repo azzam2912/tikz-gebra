@@ -1,14 +1,14 @@
 # Handoff — TikZGeo
 
-Last updated: 2026-11-21. Branches: `main` (stable MVP) and `dev` (work, ahead of `main` with
+Last updated: 2026-11-26. Branches: `main` (stable MVP) and `dev` (work, ahead of `main` with
 the multi-language work below; merge only when the user asks).
 
 ## Status
 
 The MVP is complete, and the editor now reads **tkz-euclide, plain TikZ and Asymptote**, converts
-between tkz-euclide and Asymptote, and edits dragged points **in place**. A GeoGebra-style tool row creates objects by clicking.
-There are 244 tests and
-strict `tsc` is clean.
+between tkz-euclide and Asymptote, and edits dragged points **in place**. A GeoGebra-style tool row creates objects by clicking,
+points can sit **on objects** (gliders) or at **crossings**, and a **properties panel** restyles objects in place.
+There are 282 tests and strict `tsc` is clean.
 
 | Milestone | Contents | State |
 |---|---|---|
@@ -20,6 +20,37 @@ strict `tsc` is clean.
 | M9 | Conversion tkz-euclide ⇄ Asymptote, in-place drag, language picker, Asymptote highlighting | ✅ |
 | Extra | `tests/asymptote.test.ts`: random figures + conversions vs real Asymptote 2.87. `tests/corpus.test.ts`: real figures vs both programs | ✅ |
 | M10 | GeoGebra-style construction tools (21 tools, second toolbar row), Undo/Redo buttons, Esc to cancel; code written in the current language | ✅ |
+| M11 | Points on objects and crossings, properties panel, tangent / arc / semicircle / sector / rotate / dilate / translate tools (see below) | ✅ |
+
+### M11 in short (2026-11-26)
+
+- **Gliders.** With a point input, a click on a segment / line / side makes
+  `\tkzDefPointOnLine[pos=t](A,B)` (Asymptote `interp(A, B, t)`), a click on a circle or arc makes
+  `\tkzDefPointBy[rotation=center O angle a](T)` (Asymptote `rotate(a, O)*T`), T = the circle's
+  through point. Such points are teal and draggable: the drag rewrites only t / the angle / a
+  homothety ratio (`Literal` kind `param`, `ui/literal.ts` `paramEdits`). On a segment or polygon
+  side (and no drawn line AB) t stays in 0..1. Any `homothety`/`rotation` written with a plain
+  number in the user's code is draggable the same way.
+- **Crossings.** `tools.ts` `crossings()` lists where two drawn curves meet (segments, lines,
+  polygon sides, circles, arcs; not at an existing point). While a tool waits for a point they show
+  as small × marks; a click within 10 px makes `\tkzInterLL/LC/CC` (the other point of a pair gets
+  an internal name → `\tkzGetFirstPoint` / `\tkzGetSecondPoint`). Shift+click puts a glider on
+  the clicked object instead.
+- **Properties panel** (`ui/PropsPanel.tsx`, logic in `ui/props.ts`): in Move mode a click on an
+  object or point opens it. Colour, line width, line style, fill + opacity (closed shapes, tkz only),
+  equal marks on the clicked side (adds/edits/removes `\tkzMarkSegment[mark=||]`), angle marks
+  (`arc=ll`, `size=`, a `\tkzLabelAngle`), label position of a point (splits it out of a
+  `\tkzLabelPoints` list). Edits change the `[options]` key by key (unknown keys stay) through
+  `DrawStatement.opt` spans; Asymptote edits the pen argument of `draw`/`fill` and the direction
+  of `dot`/`label`. The panel takes a `text` prop so nagori can translate it.
+- **New tools:** tangent (at a point on the circle, or the two from a point outside, built as
+  midpoint + `\tkzInterCC`), arc, semicircle (on a diameter), sector, rotate (angle), dilate
+  (factor), translate (vector). Rotate/dilate/translate/reflect accept a point or a whole object
+  (segment, polygon, circle, arc, marks); the images of the user's points are named `A_1`, `B_1`…
+  A reflection swaps the ends of arcs and angle marks so they keep their side.
+- **Engine:** `onLine` construction; drawings `tkzDrawArc`, `tkzDrawSemiCircle`, `tkzDrawSector`,
+  `tkzFillSector`, `tkzLabelAngle` (parse, render, tkz + Asymptote codegen, Asymptote front end);
+  multi-bar segment marks and multi-arc angle marks are drawn; `%` in Asymptote expressions.
 
 **Real-world check:** all 90 diagram files of
 [Geometry-Everyday-Project](https://github.com/azzam2912/Geometry-Everyday-Project) (34 Asymptote,
@@ -122,14 +153,18 @@ that installs TeX Live and runs `npm ci`. It doesn't install `asymptote` yet; ad
 
 ## Open items / possible next steps
 
-0. **Tools:** no delete tool yet (use Undo); no "point on object" (a click on an object with
-   the point tool makes a free point there); new points are labelled `above right` / `NE`.
+0. **Tools:** no delete tool yet (use Undo); new points are labelled `above right` / `NE`.
+   Not done from the Studio-TikZ comparison: common tangents of two circles, the circle by
+   three conditions (Apollonius), polar/pole, inversion, regular polygon, free text labels,
+   clipping, several sheets / save to a file / `.ggb` import, AoPS export, dark theme.
 
 1. **GitHub housekeeping (needs you):** set the repo's default branch to `main`
    (Settings → General → Default branch). After that, the old branch
    `claude/practical-feynman-f0m445` can be deleted.
-2. **Arcs** (`\tkzDrawArc`, TikZ `arc`, Asymptote `arc`) are skipped with a warning. They are
-   the most common remaining unsupported drawing (GeoGebra angle markers).
+2. **Arcs:** `\tkzDrawArc(O,A)(B)` (towards), `\tkzDrawSemiCircle`, `\tkzDrawSector` and Asymptote
+   `arc(…)` are drawn; the other `\tkzDrawArc` types and plain TikZ `arc` are still a warning.
+   Properties panel gaps: fills in Asymptote, Asymptote segment/angle marks, and point colours.
+   Selecting a drawing keeps it by command + points, so it survives edits.
 3. **Asymptote:** `point(path, t)`, `relpoint`, user functions and loops (skipped now).
    `tests/asymptote.test.ts` is where any new function must be verified.
 4. **Labels** are plain text (subscripts, primes, a few symbols), not KaTeX.

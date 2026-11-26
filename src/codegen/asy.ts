@@ -8,7 +8,7 @@ import type { Construction, DrawingSpec, Graph, PointId } from '../graph/types';
 import { isAux } from '../parser/ast';
 import { asyStyle, styleToAsyFill, styleToAsyPen, tikzStyle } from '../style';
 import { fmt, fmtK, type GenerateOptions } from './codegen';
-import { labelDirOf } from '../ui/shapes';
+import { labelAngleDist, labelDirOf } from '../ui/shapes';
 import { asyRegion } from '../asy/front';
 
 const ASY_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -78,6 +78,8 @@ export function constructionAsy(c: Construction, name: (p: PointId) => string, o
     }
     case 'midpoint':
       return decl(`midpoint(${a[0]}--${a[1]})`);
+    case 'onLine':
+      return decl(`interp(${a[0]}, ${a[1]}, ${fmtK(c.t)})`);
     case 'projection':
       return decl(`foot(${a[0]}, ${a[1]}, ${a[2]})`);
     case 'reflection':
@@ -229,6 +231,22 @@ export function drawingAsy(d: DrawingSpec, name: (p: PointId) => string, colors:
     case 'tkzMarkSegment':
     case 'tkzMarkSegments':
       return g.map((p) => `// tick mark on ${p[0]}--${p[1]} (no Asymptote equivalent in olympiad.asy)`);
+    case 'tkzDrawArc':
+      return [withPen(`arc(${first[0]}, ${first[1]}, ${first[2]})`)];
+    case 'tkzDrawSemiCircle':
+      return [withPen(`arc(${first[0]}, ${first[1]}, 2*${first[0]} - ${first[1]})`)];
+    case 'tkzDrawSector':
+      if (st.fill && d.src !== 'asy') return [`filldraw(${first[0]}--arc(${first[0]}, ${first[1]}, ${first[2]})--cycle, ${styleToAsyFill(st)}${pen ? `, ${pen}` : ''});`];
+      return [withPen(`${first[0]}--arc(${first[0]}, ${first[1]}, ${first[2]})--cycle`)];
+    case 'tkzFillSector':
+      return [`fill(${first[0]}--arc(${first[0]}, ${first[1]}, ${first[2]})--cycle${fillPen ? `, ${fillPen}` : ''});`];
+    case 'tkzLabelAngle': {
+      // at dist (default 1) along the bisector of the counter-clockwise angle from BA to BC
+      const [A, B, C] = first;
+      const dist = labelAngleDist(d.options);
+      const text = (d.text ?? '').replace(/"/g, '\\"');
+      return [`label("${text}", ${B} + ${fmtK(dist)}*dir(degrees(${A} - ${B}) + ((degrees(${C} - ${B}) - degrees(${A} - ${B})) % 360)/2));`];
+    }
   }
 }
 

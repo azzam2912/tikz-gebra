@@ -65,8 +65,9 @@ describe.each(['tkz', 'asy'] as const)('tools in %s', (lang) => {
   it('midpoint, foot, reflections, centres', () => {
     near(run(lang, 'midpoint', [pt('A'), pt('B')]).pos.get('D'), 2, 0);
     near(run(lang, 'foot', [pt('C'), pt('A'), pt('B')]).pos.get('D'), 1, 0);
-    near(run(lang, 'reflectLine', [pt('C'), pt('A'), pt('B')]).pos.get('D'), 1, -3);
-    near(run(lang, 'reflectPoint', [pt('C'), pt('A')]).pos.get('D'), -1, -3);
+    // images of a point are named after it
+    near(run(lang, 'reflectLine', [pt('C'), pt('A'), pt('B')]).pos.get('C_1'), 1, -3);
+    near(run(lang, 'reflectPoint', [pt('C'), pt('A')]).pos.get('C_1'), -1, -3);
     near(run(lang, 'centroid', [pt('A'), pt('B'), pt('C')]).pos.get('D'), 5 / 3, 1);
     near(run(lang, 'circumcenter', [pt('A'), pt('B'), pt('C')]).pos.get('D'), 2, 1 / 3 + 2 / 3);
     near(run(lang, 'orthocenter', [pt('A'), pt('B'), pt('C')]).pos.get('D'), 1, 1);
@@ -138,9 +139,12 @@ describe('tool helpers', () => {
       const n = t.inputs === 'polygon' ? 3 : t.inputs.length;
       const clicks: Target[] = ['A', 'B', 'C'].slice(0, n).map(pt);
       if (t.inputs === 'polygon') clicks.push(pt('A'));
-      // inputs of kind 'line' take two points each
-      const expanded = t.inputs === 'polygon' ? clicks : t.inputs.flatMap((k, i) => (k === 'point' ? [clicks[i] ?? pt('C')] : [pt('A'), pt('B')]));
-      for (const lang of ['tkz', 'asy'] as const) run(lang, t.id, t.id === 'intersect' ? [pt('A'), pt('C'), pt('B'), pt('C')] : expanded);
+      for (const lang of ['tkz', 'asy'] as const) {
+        // inputs of kind 'line' take two points each; 'circle' clicks the circle
+        const expanded = t.inputs === 'polygon' ? clicks : t.inputs.flatMap((k, i): (Target | ((code: string) => Target))[] => (k === 'point' || k === 'object' ? [clicks[i] ?? pt('C')] : k === 'circle' ? [drawingClick('tkzDrawCircle', 4, 0)] : [pt('A'), pt('B')]));
+        const r = run(lang, t.id, t.id === 'intersect' ? [pt('A'), pt('C'), pt('B'), pt('C')] : expanded);
+        expect(r.last.finished, `${t.id} in ${lang}`).toBe(true);
+      }
     }
   });
   it('clicking a polygon picks the nearest side; a circle picks the circle', () => {

@@ -70,6 +70,8 @@ export function constructionCode(c: Construction, name: (p: PointId) => string =
     }
     case 'midpoint':
       return `\\tkzDefMidPoint(${a[0]},${a[1]}) ${get(0)}`;
+    case 'onLine':
+      return `\\tkzDefPointOnLine[pos=${fmtK(c.t)}](${a[0]},${a[1]}) ${get(0)}`;
     case 'projection':
       return `\\tkzDefPointBy[projection=onto ${a[1]}--${a[2]}](${a[0]}) ${get(0)}`;
     case 'reflection':
@@ -165,7 +167,11 @@ export function drawingCode(d: DrawingSpec, name: (p: PointId) => string = (p) =
   const opt = options !== null && options !== '' ? `[${options}]` : '';
   const pairs = d.cmd === 'tkzDrawSegments' || d.cmd === 'tkzDrawLines' || d.cmd === 'tkzDrawCircles' || d.cmd === 'tkzMarkSegments';
   const body = pairs ? d.groups.map((g) => g.map(name).join(',')).join(' ') : (d.groups[0] ?? []).map(name).join(',');
-  if (d.cmd === 'tkzLabelPoint') return `\\${d.cmd}${opt}(${body}){${d.text ?? ''}}`;
+  if (d.cmd === 'tkzLabelPoint' || d.cmd === 'tkzLabelAngle') return `\\${d.cmd}${opt}(${body}){${d.text ?? ''}}`;
+  if (d.cmd === 'tkzDrawArc' || d.cmd === 'tkzDrawSector' || d.cmd === 'tkzFillSector') {
+    const [o, a, b] = (d.groups[0] ?? []).map(name);
+    return `\\${d.cmd}${opt}(${o},${a})(${b})`;
+  }
   return `\\${d.cmd}${opt}(${body})`;
 }
 

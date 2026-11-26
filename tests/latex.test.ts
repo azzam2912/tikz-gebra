@@ -83,7 +83,9 @@ function randomCases(n: number): Case[] {
 \\tkzDefTriangleCenter[euler](A,B,C) \\tkzGetPoint{R11}
 \\tkzInCenter(A,B,C)\\tkzGetPoint{R12}
 \\tkzCircumCenter(A,B,C)\\tkzGetPoint{R13}
-\\tkzExCenter(A,B,C)\\tkzGetPoint{R14}`,
+\\tkzExCenter(A,B,C)\\tkzGetPoint{R14}
+\\tkzDefPointOnLine[pos=${fmt(r() * 3 - 1)}](A,B) \\tkzGetPoint{R15}
+\\tkzDefPointOnLine[pos=0.25](C,D) \\tkzGetPoint{R16}`,
     });
     cases.push({
       title: `random #${i} — common / near / first / second`,
@@ -221,6 +223,33 @@ describe.skipIf(!hasLatex())('agreement with real tkz-euclide (pdflatex)', () =>
     },
     300_000,
   );
+
+  it('the drawing commands of the tools and the properties panel compile without errors', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tkzdraw-'));
+    const body = `\\tkzDefPoints{0/0/O, 3/0/A, 1/2/B, -2/1/C, 4/3/D}
+\\tkzDefPointOnLine[pos=0.4](A,D) \\tkzGetPoint{G}
+\\tkzDefPointBy[rotation=center O angle 37.5](A) \\tkzGetPoint{K}
+\\tkzDefMidPoint(O,D) \\tkzGetPoint{q1}
+\\tkzInterCC(O,A)(q1,O) \\tkzGetPoints{T}{T_1}
+\\tkzDrawArc[color=red, thick](O,A)(B)
+\\tkzDrawSemiCircle[dashed](O,A)
+\\tkzDrawSector[fill=blue, fill opacity=0.3](O,A)(C)
+\\tkzFillSector[color=green, opacity=0.2](O,B)(C)
+\\tkzDrawPolygon[color=teal, densely dotted, fill=orange, fill opacity=0.3](O,A,D)
+\\tkzDrawLines(D,T D,T_1)
+\\tkzMarkAngle[arc=ll, size=0.8, color=violet](A,O,B)
+\\tkzLabelAngle[dist=1.15](A,O,B){$\\alpha$}
+\\tkzMarkSegment[mark=||](O,A)
+\\tkzMarkSegment[mark=|||](A,D)
+\\tkzMarkSegments[mark=|](O,B O,C)
+\\tkzLabelPoint[above left](G){$G$}
+\\tkzLabelPoints[below right](O,A)`;
+    expect(compile(body).diagnostics).toEqual([]);
+    writeFileSync(join(dir, 'd.tex'), `\\documentclass{standalone}\n\\usepackage{tkz-euclide}\n\\begin{document}\n\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}\n\\end{document}\n`);
+    spawnSync('pdflatex', ['-interaction=nonstopmode', 'd.tex'], { cwd: dir, stdio: 'pipe', timeout: 120_000 });
+    const log = readFileSync(join(dir, 'd.log'), 'utf8');
+    expect(log.split('\n').filter((l) => l.startsWith('!'))).toEqual([]);
+  }, 120_000);
 
   it(
     '\\tkzInterLC with the line through the centre (documented assumption)',

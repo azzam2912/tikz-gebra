@@ -8,6 +8,7 @@
   --accent-soft: #dbe6fd;
   --free: #2563eb;
   --derived: #3f3f46;
+  --glider: #0d9488;
   --hot: #f97316;
   --error: #dc2626;
   --warning: #b45309;
@@ -264,6 +265,19 @@ body,
 .pt.derived .dot {
   fill: var(--derived);
 }
+.pt.derived.glider .dot {
+  fill: var(--glider);
+}
+.pt.glider {
+  cursor: move;
+}
+.crossing {
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  fill: none;
+  pointer-events: none;
+  opacity: 0.75;
+}
 .pt.ghost .dot {
   opacity: 0.45;
 }
@@ -324,4 +338,142 @@ body,
   border-radius: 50%;
   vertical-align: middle;
   margin-right: 4px;
+}
+
+/* ------------------------------------------------------------------ tool number */
+.tools .param {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.tools .param input {
+  width: 64px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* ------------------------------------------------------------------ properties panel */
+.props {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  width: 280px;
+  max-height: calc(100% - 20px);
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.12);
+  font-size: 12px;
+}
+.props-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.props-close {
+  border: none;
+  background: none;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--muted);
+}
+.props-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+}
+.props-row.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.props-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.props-label {
+  width: 100%;
+  color: var(--muted);
+}
+.props-row label .props-label {
+  width: auto;
+}
+.props-row select,
+.props-row input[type='text'] {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 0;
+  width: 100%;
+}
+.props-row input.num {
+  width: 70px;
+}
+.props-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted);
+}
+.swatch.default {
+  background: repeating-linear-gradient(45deg, #fff 0 3px, #e5e7eb 3px 6px);
+}
+.swatch.on {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.props-choice {
+  display: inline-flex;
+  gap: 4px;
+}
+.props-choice button,
+.props-compass button {
+  min-width: 32px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+}
+.props-choice button.on,
+.props-compass button.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.props-compass {
+  display: grid;
+  grid-template-columns: repeat(3, 32px);
+  gap: 4px;
+}
+.props-value {
+  color: var(--muted);
+}
+.props-note {
+  margin-top: 6px;
+  color: var(--muted);
 }

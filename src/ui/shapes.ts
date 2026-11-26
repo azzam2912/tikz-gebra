@@ -1,6 +1,7 @@
 // Graph + evaluated coordinates → what the canvas draws (math coordinates, styles resolved).
 // Pure: no DOM. Shapes that reference an undefined point are dropped (hidden).
 
+import { normalizeAngles } from '../geom/constructions';
 import type { Evaluated } from '../geom/evaluate';
 import { add, dist, lerp, scale, sub, len, type Vec } from '../geom/vec';
 import type { Drawing, Graph, PointId } from '../graph/types';
@@ -17,10 +18,12 @@ export type Shape =
   | { type: 'line'; a: Vec; b: Vec }
   /** right-angle square at vertex b, sides along unit vectors u and v, side length s */
   | { type: 'rightAngle'; b: Vec; u: Vec; v: Vec; s: number }
-  /** arc of radius r at vertex b from angle t1 counter-clockwise to t2 (radians) */
-  | { type: 'angle'; b: Vec; r: number; t1: number; t2: number }
-  /** small tick across segment ab, at its middle */
-  | { type: 'tick'; a: Vec; b: Vec };
+  /** arc of radius r at vertex b from angle t1 counter-clockwise to t2 (radians); n concentric arcs */
+  | { type: 'angle'; b: Vec; r: number; t1: number; t2: number; n?: number }
+  /** n small ticks across segment ab, at its middle */
+  | { type: 'tick'; a: Vec; b: Vec; n?: number }
+  /** circular arc centred c from angle t1 counter-clockwise to t2 (radians); a sector is closed through c */
+  | { type: 'arc'; c: Vec; r: number; t1: number; t2: number; sector?: boolean };
 
 export interface StyledShape {
   shape: Shape;
@@ -73,7 +76,10 @@ export function shapesOf(d: Drawing, pos: Evaluated, colors: Record<string, stri
     const pts = names.map(get);
     return pts.every((p): p is Vec => p !== null) ? pts : null;
   };
-  const style = styleOf(d.d, colors);
+  const base = styleOf(d.d, colors);
+  // \tkzFillPolygon[color=red] fills with its colour
+  const isFill = d.d.cmd === 'tkzFillPolygon' || d.d.cmd === 'tkzFillCircle' || d.d.cmd === 'tkzFillSector';
+  const style = isFill && !base.fill && d.d.src !== 'asy' ? { ...base, fill: base.color ?? 'rgb(0,0,0)' } : base;
   const out: StyledShape[] = [];
   const push = (shape: Shape, fillOnly = false) => out.push({ shape, style, ...(fillOnly ? { fillOnly } : {}) });
   const marks = MARK[d.d.src ?? 'tkz'];
@@ -113,6 +119,28 @@ export function shapesOf(d: Drawing, pos: Evaluated, colors: Record<string, stri
         if (p) push({ type: 'circle', c: p[0]!, r: dist(p[0]!, p[1]!) }, d.d.cmd === 'tkzFillCircle');
       }
       break;
+    case 'tkzDrawArc':
+    case 'tkzDrawSector':
+    case 'tkzFillSector':
+    case 'tkzDrawSemiCircle': {
+      const p = all(d.d.groups[0]!);
+      if (!p) break;
+      const [o, a] = [p[0]!, p[1]!];
+      const r = dist(o, a);
+      if (r === 0) break;
+      const deg = (v: Vec) => (Math.atan2(v.y - o.y, v.x - o.x) * 180) / Math.PI;
+      let t1: number;
+      let t2: number;
+      if (d.d.cmd === 'tkzDrawSemiCircle') {
+        [t1, t2] = normalizeAngles(deg(a), deg({ x: 2 * o.x - a.x, y: 2 * o.y - a.y }));
+      } else {
+        if (dist(o, p[2]!) === 0) break;
+        [t1, t2] = normalizeAngles(deg(a), deg(p[2]!));
+      }
+      const sector = d.d.cmd === 'tkzDrawSector' || d.d.cmd === 'tkzFillSector';
+      push({ type: 'arc', c: o, r, t1: (t1 * Math.PI) / 180, t2: (t2 * Math.PI) / 180, ...(sector ? { sector } : {}) }, d.d.cmd === 'tkzFillSector');
+      break;
+    }
     case 'tkzMarkRightAngle': {
       const p = all(d.d.groups[0]!);
       const u = p && unit(sub(p[0]!, p[1]!));
@@ -127,20 +155,43 @@ export function shapesOf(d: Drawing, pos: Evaluated, colors: Record<string, stri
       let t2 = Math.atan2(p[2]!.y - p[1]!.y, p[2]!.x - p[1]!.x);
       if (t2 < t1) t2 += 2 * Math.PI;
       const r = sizeOption(d.d.options, 'size') ?? sizeOption(d.d.options, 'angle radius') ?? marks.angle;
-      push({ type: 'angle', b: p[1]!, r, t1, t2 });
+      const n = arcCount(d.d.options);
+      push({ type: 'angle', b: p[1]!, r, t1, t2, ...(n > 1 ? { n } : {}) });
       break;
     }
     case 'tkzMarkSegment':
     case 'tkzMarkSegments':
       for (const g of d.d.groups) {
         const p = all(g);
-        if (p && dist(p[0]!, p[1]!) > 0) push({ type: 'tick', a: p[0]!, b: p[1]! });
+        const n = tickCount(d.d.options);
+        if (p && dist(p[0]!, p[1]!) > 0 && n > 0) push({ type: 'tick', a: p[0]!, b: p[1]!, ...(n > 1 ? { n } : {}) });
       }
       break;
     default:
       break;
   }
   return out;
+}
+
+/** dist= (or the older pos=) of \tkzLabelAngle, in cm; default 1. */
+export function labelAngleDist(options: string | null): number {
+  const m = options ? /(?:^|,)\s*(?:dist|pos)\s*=\s*([+-]?(?:\d+\.?\d*|\.\d+))/.exec(options) : null;
+  return m ? Number(m[1]) : 1;
+}
+/** Number of bars of a tkz-euclide segment mark (mark=| by default; ||, |||, s||…); 0 = none. */
+export function tickCount(options: string | null): number {
+  const m = options ? /(?:^|,)\s*mark\s*=\s*([^,]*)/.exec(options) : null;
+  if (!m) return 1;
+  const v = m[1]!.trim();
+  if (v === 'none') return 0;
+  const bars = (v.match(/\|/g) ?? []).length;
+  return bars || 1;
+}
+
+/** Number of arcs of \tkzMarkAngle (arc=l / ll / lll). */
+export function arcCount(options: string | null): number {
+  const m = options ? /(?:^|,)\s*arc\s*=\s*(l{1,3})\s*(?:,|$)/.exec(options) : null;
+  return m ? m[1]!.length : 1;
 }
 
 /** Label position from TikZ / tkz-euclide options ("above right", "anchor=north", "left=2pt"). */
@@ -188,6 +239,15 @@ export function labelsOf(d: Drawing, pos: Evaluated, colors: Record<string, stri
       const at = pos.get(name);
       return at ? [{ drawing: d.id, at, text: `$${name}$`, dir, ...(color ? { color } : {}) }] : [];
     });
+  }
+  if (d.d.cmd === 'tkzLabelAngle') {
+    const [a, b, c] = d.d.groups[0]!.map((n) => pos.get(n) ?? null);
+    if (!a || !b || !c || dist(a, b) === 0 || dist(c, b) === 0) return [];
+    const deg = (v: Vec) => (Math.atan2(v.y - b.y, v.x - b.x) * 180) / Math.PI;
+    const [t1, t2] = normalizeAngles(deg(a), deg(c));
+    const t = (((t1 + t2) / 2) * Math.PI) / 180;
+    const k = labelAngleDist(d.d.options);
+    return [{ drawing: d.id, at: { x: b.x + k * Math.cos(t), y: b.y + k * Math.sin(t) }, text: d.d.text ?? '', dir: null, ...(color ? { color } : {}) }];
   }
   if (d.d.cmd !== 'tkzLabelPoint') return [];
   const name = d.d.groups[0]![0]!;
@@ -238,6 +298,8 @@ export interface PointHandle {
   free: boolean;
   /** has literal numbers in the source that a drag can rewrite */
   draggable: boolean;
+  /** a derived point that can be dragged along its line or circle (a number of it is literal) */
+  glider: boolean;
   /** not drawn by the figure itself (shown faded) */
   ghost: boolean;
 }
@@ -253,7 +315,8 @@ export function pointHandles(g: Graph, pos: Evaluated): PointHandle[] {
       if (!at) continue;
       // internal helper points are hidden unless they are free (numbers in the code) and not just a label spot
       if (isAux(name) && (!free || labelOnly.has(name))) continue;
-      out.push({ name, stepId: step.id, at, free, draggable: free && !!step.lit, ghost: !drawn.has(name) });
+      const glider = !free && step.lit?.kind === 'param' && step.c.out.length === 1;
+      out.push({ name, stepId: step.id, at, free, draggable: (free && !!step.lit) || glider, glider, ghost: !drawn.has(name) });
     }
   }
   return out;
@@ -282,6 +345,13 @@ export function boundingBox(g: Graph, pos: Evaluated): BBox | null {
       } else if (s.type === 'segment' || s.type === 'line' || s.type === 'tick') {
         addPt(s.a.x, s.a.y);
         addPt(s.b.x, s.b.y);
+      } else if (s.type === 'arc') {
+        // the end points, the centre (sectors) and the extreme points the arc passes
+        const at = (t: number) => addPt(s.c.x + s.r * Math.cos(t), s.c.y + s.r * Math.sin(t));
+        at(s.t1);
+        at(s.t2);
+        if (s.sector) addPt(s.c.x, s.c.y);
+        for (let k = Math.ceil(s.t1 / (Math.PI / 2)); k * (Math.PI / 2) <= s.t2; k++) at(k * (Math.PI / 2));
       } else if (s.type === 'polygon' || s.type === 'polyline') {
         for (const p of s.pts) addPt(p.x, p.y);
       } else {

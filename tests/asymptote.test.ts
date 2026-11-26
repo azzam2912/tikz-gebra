@@ -75,6 +75,8 @@ pair L4[] = intersectionpoints(circumcircle(A, B, C), Circle(B, 0.9));
 pair L5[] = intersectionpoints(Q--(Q + 7*unit(I - Q)), Circle(I, 1.9));
 pair F0 = L1[0], F1 = L1[1], F2 = L2[0], F3 = L2[1], F4 = L3[0], F5 = L3[1], F6 = L4[0], F7 = L4[1];
 pair F8 = L5[0];
+pair R2 = interp(P, Q, ${fmt(r() * 3 - 1)}), U2 = rotate(-${a()}, P)*Q;
+draw(arc(O, A, B), red); draw(O--arc(O, B, C)--cycle); fill(I--arc(I, P, Q)--cycle, blue+opacity(0.2)); draw(arc(P, 1.5, 20, 200));
 `;
 }
 
@@ -132,7 +134,14 @@ describe.skipIf(!hasAsy())('agreement with real Asymptote', () => {
 \\tkzDefTriangleCenter[ex](A,B,C)\\tkzGetPoint{J}
 \\tkzDefTriangleCenter[euler](A,B,C)\\tkzGetPoint{N}
 \\tkzInterLC(A,B)(C,D)\\tkzGetPoints{P}{Q}
-\\tkzInterCC(A,C)(B,D)\\tkzGetPoints{S}{T}`;
+\\tkzInterCC(A,C)(B,D)\\tkzGetPoints{S}{T}
+\\tkzDefPointOnLine[pos=1.3](A,B)\\tkzGetPoint{Ol}
+\\tkzDrawArc[red](A,B)(C)
+\\tkzDrawSemiCircle(A,C)
+\\tkzDrawSector[fill=blue, fill opacity=0.3](B,A)(C)
+\\tkzFillSector[green](C,A)(B)
+\\tkzMarkAngle(B,A,C)
+\\tkzLabelAngle[dist=1.2](B,A,C){$\\alpha$}`;
         const res = compile(src);
         const pos = evaluate(res.graph!);
         if ([...pos.values()].some((v) => !v)) continue;
@@ -154,16 +163,35 @@ describe.skipIf(!hasAsy())('agreement with real Asymptote', () => {
   it('code written by every construction tool runs in Asymptote with the same points', () => {
     let code = 'pair A = (0, 0), B = (4, 0), C = (1, 3);\ndraw(A--B--C--cycle);\ndraw(circle(A, abs(B - A)));\n';
     const pt = (name: string): Target => ({ kind: 'point', name });
+    // the drawing that is the circle (A, |AB|) / the triangle, in the current code
+    const drawing = (cmd: string, at: { x: number; y: number }) => (): Target => {
+      const g = compile(code, 'asy').graph!;
+      return { kind: 'drawing', id: g.drawings.find((d) => d.d.cmd === cmd)!.id, at, tol: 0.2 };
+    };
+    const runs: { tool: (typeof TOOLS)[number]['id']; clicks: (Target | (() => Target))[] }[] = [];
     for (const t of TOOLS) {
       if (t.id === 'move') continue;
-      const clicks: Target[] =
+      const clicks: (Target | (() => Target))[] =
         t.inputs === 'polygon'
           ? [pt('A'), pt('B'), { kind: 'empty', at: { x: 3, y: 4 } }, pt('A')]
           : t.id === 'intersect'
             ? [pt('A'), pt('C'), pt('B'), pt('C')]
-            : t.inputs.flatMap((k, i) => (k === 'point' ? [pt('ABC'[i]!)] : [pt('A'), pt('B')]));
-      let s = initialState(t.id);
-      for (const c of clicks) {
+            : t.id === 'tangent'
+              ? [pt('B'), drawing('tkzDrawCircle', { x: 0, y: 4 })]
+              : t.inputs.flatMap((k, i): (Target | (() => Target))[] => (k === 'point' || k === 'object' ? [pt('ABC'[i]!)] : k === 'circle' ? [drawing('tkzDrawCircle', { x: 0, y: 4 })] : [pt('A'), pt('B')]));
+      runs.push({ tool: t.id, clicks });
+    }
+    // gliders, a crossing, a tangent from outside, transformed objects
+    runs.push({ tool: 'point', clicks: [drawing('tkzDrawCircle', { x: -2.8, y: 2.9 })] });
+    runs.push({ tool: 'point', clicks: [drawing('tkzDrawPolygon', { x: 2.5, y: 1.5 })] });
+    runs.push({ tool: 'point', clicks: [drawing('tkzDrawPolygon', { x: 1.5, y: 3.6 })] });
+    runs.push({ tool: 'tangent', clicks: [{ kind: 'empty', at: { x: 6, y: 1 } }, drawing('tkzDrawCircle', { x: 0, y: -4 })] });
+    runs.push({ tool: 'rotate', clicks: [drawing('tkzDrawPolygon', { x: 2, y: 0 }), pt('C')] });
+    runs.push({ tool: 'reflectLine', clicks: [drawing('tkzDrawCircle', { x: 0, y: -4 }), pt('B'), pt('C')] });
+    for (const { tool, clicks } of runs) {
+      let s = initialState(tool);
+      for (const c0 of clicks) {
+        const c = typeof c0 === 'function' ? c0() : c0;
         const o = handlePick(s, c, code, 'asy', false);
         s = o.state;
         if (o.text !== undefined) code = o.text;

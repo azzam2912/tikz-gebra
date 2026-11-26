@@ -59,8 +59,9 @@ Set `GEP_DIR=/path/to/Geometry-Everyday-Project` to run the corpus test on a who
 |---|---|
 | Edit | Type in the editor. It re-parses after 150 ms. On an error the last valid figure stays visible and the error is underlined and listed (click a message to jump to it). Unknown commands are skipped with a warning, so the rest still draws. |
 | Language | Detected automatically (`\begin{asy}`, `pair …;`, `draw(…)` → Asymptote). The menu forces one. |
-| Construct | Pick a tool in the second toolbar row (point, segment, line, polygon, perpendicular, parallel, perpendicular bisector, midpoint, intersection, foot, reflections, triangle centres, circles, incircle, angle marks) and click on the figure. Clicking an empty spot makes a new point; a line can be a clicked segment/side or two points. The code is written for you in the current language, before `\end{tikzpicture}` / `\end{asy}`. Esc cancels; Undo/Redo buttons. |
-| Move a point | Drag a **blue** (free) point. Grey free points have computed coordinates and can't be dragged. Derived points are smaller and dark; faded ones are not drawn as points by the figure itself. |
+| Construct | Pick a tool in the second toolbar row (point, segment, line, polygon, perpendicular, parallel, perpendicular bisector, midpoint, intersection, foot, triangle centres, circles, incircle, tangent, arc, semicircle, sector, reflections, rotate, dilate, translate, angle marks) and click on the figure. Clicking an empty spot makes a new point, clicking an object puts the point **on** it, and clicking near a crossing (× marks) makes the intersection point (Shift: on the object instead). A line can be a clicked segment/side or two points; transformations take a point or a whole object. The code is written for you in the current language, before `\end{tikzpicture}` / `\end{asy}`. Esc cancels; Undo/Redo buttons. |
+| Move a point | Drag a **blue** (free) point. **Teal** points sit on a line or circle and slide along it (only their `pos=` / angle changes in the code). Grey free points have computed coordinates and can't be dragged. Derived points are smaller and dark; faded ones are not drawn as points by the figure itself. |
+| Style | In Move mode click an object (or a point) to open its properties: colour, line width and style, fill, equal marks on a side, angle mark arcs and label, label position. The options in the code change in place. |
 | Snap | Rounds dragged coordinates to a 0.5 grid (polar points: 5°). Otherwise 2 decimals. |
 | Undo a drag | Ctrl+Z in the editor undoes a whole drag (and a conversion). |
 | Pan / zoom | Drag on empty canvas / mouse wheel. "Fit view" re-centres the figure. |
@@ -93,9 +94,12 @@ Examples are in [`examples/`](examples) and in the "Load example…" menu.
 \tkzCircumCenter(A,B,C)  \tkzInCenter(A,B,C)  \tkzExCenter(A,B,C) …   \tkzGetPoint{O}
 ```
 
+Points on a line: `\tkzDefPointOnLine[pos=t](A,B) \tkzGetPoint{P}`.
+
 Drawing: `\tkzDrawSegment(s)`, `\tkzDrawLine(s)`, `\tkzDrawPolygon`, `\tkzDrawPolySeg`,
-`\tkzDrawCircle(s)`, `\tkzFillPolygon`, `\tkzFillCircle`, `\tkzDrawPoint(s)`, `\tkzLabelPoint(s)`,
-`\tkzMarkRightAngle`, `\tkzMarkAngle`, `\tkzMarkSegment(s)`. Options are kept verbatim; colours
+`\tkzDrawCircle(s)`, `\tkzDrawArc(O,A)(B)`, `\tkzDrawSemiCircle(O,A)`, `\tkzDrawSector(O,A)(B)`,
+`\tkzFillPolygon`, `\tkzFillCircle`, `\tkzFillSector`, `\tkzDrawPoint(s)`, `\tkzLabelPoint(s)`,
+`\tkzMarkRightAngle`, `\tkzMarkAngle`, `\tkzLabelAngle`, `\tkzMarkSegment(s)`. Options are kept verbatim; colours
 (xcolor names, mixes like `green!60!black`, `\definecolor`), dashes, widths and fills are drawn.
 
 ### Plain TikZ
@@ -112,7 +116,7 @@ draggable point. Arcs, `.. controls ..`, `shift`ed paths and the like are skippe
 `pair X[] = intersectionpoints(…)`), arithmetic on pairs, `dir`, `unit`, `abs`, `rotate`,
 `reflect`, `shift`, `scale`, `interp`, `foot`, `extension`, `midpoint`, `incenter`,
 `circumcenter`, `orthocenter`, `centroid`, `excenter`, `circumcircle`, `incircle`, `circle`,
-`Circle`, `unitcircle`, `line`, `segment`, `perpendicular`, `parallel`, `intersectionpoint(s)`
+`Circle`, `unitcircle`, `line`, `segment`, `perpendicular`, `parallel`, `arc`, `intersectionpoint(s)`
 (with Asymptote's own order of the points), `rightanglemark`, `anglemark`; `draw`, `filldraw`,
 `fill`, `dot`, `label`, `Drawing`, `MP`. Loops and function definitions are skipped with a warning.
 

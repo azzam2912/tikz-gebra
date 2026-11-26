@@ -6,14 +6,15 @@ import { EXAMPLES } from '../examples';
 import { evaluate } from '../geom/evaluate';
 import type { Vec } from '../geom/vec';
 import type { Graph, PointId } from '../graph/types';
-import type { Span } from '../parser/ast';
+import { isAux as isAuxName, type Span } from '../parser/ast';
 import { compile, detectLang, type Lang } from '../pipeline';
 import { Canvas } from './Canvas';
 import { targetAt, type HoverTarget } from './hover';
 import { Editor, type EditorHandle } from './Editor';
-import { applyEdits, moveEdits } from './literal';
+import { applyEdits, moveEdits, paramEdits, segmentOnly } from './literal';
 import { ToolIcon } from './ToolIcons';
-import { TOOL_TEXT, TOOLS, handlePick, hintOf, initialState, selectionOf, type Target, type ToolState } from './tools';
+import { PropsPanel, type Selection } from './PropsPanel';
+import { TOOL_TEXT, TOOLS, crossings, curveOfDrawing, handlePick, hintOf, initialState, nextInput, selectionOf, toolSpec, type Target, type ToolState } from './tools';
 
 const PARSE_DEBOUNCE_MS = 150;
 
@@ -40,6 +41,8 @@ export function App() {
   const onCanvasHover = useCallback((t: HoverTarget) => setHoverFrom('canvas', t), [setHoverFrom]);
   const [snap, setSnap] = useState(false);
   const [tool, setTool] = useState<ToolState>(initialState('move'));
+  /** Selected object (move mode), kept by its command and points so it survives edits. */
+  const [selKey, setSelKey] = useState<{ kind: 'point'; name: PointId } | { kind: 'drawing'; sig: string; side: [PointId, PointId] | null } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -76,18 +79,54 @@ export function App() {
   const onDrag = useCallback(
     (name: PointId, p: Vec) => {
       if (!result.graph || editor.current?.getText() !== code) return;
-      const step = result.graph.steps.find((s) => s.c.op === 'free' && s.c.out[0] === name);
-      if (!step?.lit || step.c.op !== 'free') return;
-      const m = moveEdits(step.lit, p.x, p.y, snap);
-      if (!m) return;
-      const next = applyEdits(code, m.edits);
+      const step = result.graph.steps.find((s) => s.c.out.length === 1 && s.c.out[0] === name);
+      if (!step?.lit) return;
+      let edits;
+      if (step.c.op === 'free') edits = moveEdits(step.lit, p.x, p.y, snap)?.edits;
+      else {
+        const clamp = step.c.op === 'onLine' && segmentOnly(result.graph, step.c.args[0], step.c.args[1]);
+        edits = paramEdits(step.c, step.lit, pos, p, snap, clamp)?.edits;
+      }
+      if (!edits) return;
+      const next = applyEdits(code, edits);
       if (next !== code) replaceCode(next);
     },
-    [result.graph, code, snap, replaceCode],
+    [result.graph, code, snap, replaceCode, pos],
+  );
+
+  // ------------------------------------------------------------ selection & properties
+  const sigOf = (d: Graph['drawings'][number]) => `${d.d.cmd}:${d.d.groups.map((g) => g.join(',')).join(' ')}`;
+  const selection: Selection = useMemo(() => {
+    if (!selKey || !result.graph) return null;
+    if (selKey.kind === 'point') return pos.get(selKey.name) ? selKey : null;
+    const d = result.graph.drawings.find((x) => sigOf(x) === selKey.sig);
+    return d ? { kind: 'drawing', id: d.id, side: selKey.side } : null;
+  }, [selKey, result.graph, pos]);
+  const onSelect = useCallback(
+    (t: { kind: 'point'; name: PointId } | { kind: 'drawing'; id: string; at: Vec } | null) => {
+      if (!t || !result.graph) return setSelKey(null);
+      if (t.kind === 'point') return setSelKey(isAuxName(t.name) ? null : t);
+      const d = result.graph.drawings.find((x) => x.id === t.id);
+      if (!d) return setSelKey(null);
+      const c = curveOfDrawing(result.graph, pos, t.id, t.at);
+      setSelKey({ kind: 'drawing', sig: sigOf(d), side: c?.kind === 'line' ? [c.a, c.b] : null });
+    },
+    [result.graph, pos],
+  );
+  const editFromPanel = useCallback(
+    (text: string) => {
+      if (editor.current?.getText() !== code) return;
+      replaceCode(text);
+    },
+    [code, replaceCode],
   );
 
   // ------------------------------------------------------------ construction tools
   const picking = tool.tool !== 'move' && !hasErrors;
+  const crossingMarks = useMemo(
+    () => (picking && graph && nextInput(tool) !== 'object' && nextInput(tool) !== 'circle' ? crossings(graph, pos).map((x) => x.at) : []),
+    [picking, graph, pos, tool],
+  );
   const onPick = useCallback(
     (t: Target) => {
       const current = editor.current?.getText() ?? code;
@@ -102,7 +141,10 @@ export function App() {
   );
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setTool((s) => initialState(s.tool));
+      if (e.key === 'Escape') {
+        setTool((s) => initialState(s.tool, s.param));
+        setSelKey(null);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -206,7 +248,10 @@ export function App() {
             title={TOOL_TEXT[tl.id]}
             aria-label={TOOL_TEXT[tl.id]}
             aria-pressed={tool.tool === tl.id}
-            onClick={() => setTool(initialState(tl.id))}
+            onClick={() => {
+              setTool(initialState(tl.id));
+              setSelKey(null);
+            }}
           >
             <ToolIcon id={tl.id} />
           </button>
@@ -218,7 +263,24 @@ export function App() {
         <button className="tool text" onClick={() => editor.current?.redo()} title="Redo (Ctrl+Shift+Z)">
           ↷ Redo
         </button>
-        <span className="hint">{tool.tool === 'move' ? 'Move: drag free points, drag the canvas to pan.' : hintOf(tool)}</span>
+        {toolSpec(tool.tool).param && (
+          <label className="param">
+            {toolSpec(tool.tool).param!.kind === 'angle' ? 'Angle (°)' : 'Factor'}{' '}
+            <input
+              type="number"
+              step={toolSpec(tool.tool).param!.kind === 'angle' ? 15 : 0.5}
+              value={tool.param ?? ''}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (e.target.value !== '' && Number.isFinite(v)) setTool((s) => ({ ...s, param: v }));
+              }}
+            />
+          </label>
+        )}
+        <span className="hint">
+          {tool.tool === 'move' ? 'Move: drag points (teal ones slide along their object), click an object to edit its style.' : hintOf(tool)}
+          {picking && nextInput(tool) === 'point' ? ' · Shift: on the object, not at the crossing' : ''}
+        </span>
       </div>
       <div className="panes">
         <div className="left">
@@ -261,7 +323,14 @@ export function App() {
           onDragEnd={() => editor.current?.endBatch()}
           picking={picking}
           onPick={onPick}
-          selected={selectionOf(tool)}
+          selected={picking ? selectionOf(tool) : selection ? (selection.kind === 'point' ? { points: [selection.name], drawings: [] } : { points: [], drawings: [selection.id] }) : undefined}
+          crossings={crossingMarks}
+          onSelect={tool.tool === 'move' ? onSelect : undefined}
+          overlay={
+            !picking && graph && selection ? (
+              <PropsPanel graph={graph} selection={selection} lang={lang} code={code} onEdit={editFromPanel} onClose={() => setSelKey(null)} />
+            ) : null
+          }
         />
       </div>
     </div>

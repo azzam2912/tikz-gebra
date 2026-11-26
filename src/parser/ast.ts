@@ -45,6 +45,8 @@ export type Construction =
   | { op: 'free'; args: []; out: [PointId]; x: number; y: number; polar?: true }
   /** \tkzDefMidPoint(A,B) */
   | { op: 'midpoint'; args: [PointId, PointId]; out: [PointId] }
+  /** \tkzDefPointOnLine[pos=t](A,B) → A + t(B − A) (Asymptote: interp(A,B,t)) */
+  | { op: 'onLine'; args: [PointId, PointId]; out: [PointId]; t: number }
   /** \tkzDefPointBy[projection=onto A--B](P)  → args [P, A, B] */
   | { op: 'projection'; args: [PointId, PointId, PointId]; out: [PointId] }
   /** \tkzDefPointBy[reflection=over A--B](P)  → args [P, A, B] */
@@ -101,7 +103,16 @@ export type DrawCmd =
   | 'tkzMarkSegment'
   | 'tkzMarkSegments'
   | 'tkzFillPolygon'
-  | 'tkzFillCircle';
+  | 'tkzFillCircle'
+  /** \tkzDrawArc(O,A)(B): groups [[O,A,B]]; counter-clockwise from A towards B, radius OA */
+  | 'tkzDrawArc'
+  /** \tkzDrawSemiCircle(O,A): groups [[O,A]]; half circle counter-clockwise from A */
+  | 'tkzDrawSemiCircle'
+  /** \tkzDrawSector(O,A)(B) / \tkzFillSector(O,A)(B): groups [[O,A,B]] */
+  | 'tkzDrawSector'
+  | 'tkzFillSector'
+  /** \tkzLabelAngle[dist=d](A,B,C){text}: groups [[A,B,C]] */
+  | 'tkzLabelAngle';
 
 /** Where a drawing was written; decides how `options` is read. */
 export type SourceLang = 'tkz' | 'tikz' | 'asy';
@@ -130,7 +141,10 @@ export interface DrawingSpec {
 export type Literal =
   | { kind: 'xy'; xs: Span[]; ys: Span[] }
   /** polar point: only the angle is rewritten, the radius stays */
-  | { kind: 'angle'; spans: Span[]; r: number };
+  | { kind: 'angle'; spans: Span[]; r: number }
+  /** the one number of a derived point that moves it along its object: the ratio of
+   *  \tkzDefPointOnLine / homothety, or the angle of a rotation (dragging rewrites it) */
+  | { kind: 'param'; spans: Span[] };
 
 export interface DefStatement {
   type: 'def';
@@ -145,12 +159,27 @@ export interface DefStatement {
   lit?: Literal;
 }
 
+/**
+ * Where the style of a drawing is written, so it can be edited in place:
+ *  - tkz-euclide / TikZ: `span` is the text inside [..]; `remove` the whole [..];
+ *    without options `span` is empty at the insertion point and `insert` is '[..]'.
+ *  - Asymptote: `span` is the pen argument; `remove` also covers the ", " before it;
+ *    without a pen `span` is empty before ")" and `insert` is ', ..'.
+ */
+export interface OptSpan {
+  span: Span;
+  remove?: Span;
+  insert?: 'bracket' | 'arg';
+}
+
 export interface DrawStatement {
   type: 'draw';
   d: DrawingSpec;
   span: Span;
   /** Mirrors d.groups. */
   refSpans: Span[][];
+  /** Where the options / pen are, when they can be edited in place. */
+  opt?: OptSpan;
 }
 
 export type Statement = DefStatement | DrawStatement;

@@ -168,6 +168,26 @@ All of these are part of the random cases in `tests/latex.test.ts`.
 | `\tkzCircumCenter`, `\tkzDefCircumCenter`, `\tkzInCenter`, `\tkzDefInCenter`, `\tkzOrthoCenter`, `\tkzCentroid` | `\let` aliases | same as the matching `\tkzDefTriangleCenter` |
 | `\tkzInterLC[common=X]`, `\tkzInterCC[common=X]` | `tkz-tools-eu-intersections.tex` | after the usual computation, the points are swapped unless the second is within 1 pt (LC) / 0.05 pt (CC) of X: **the second point is X, the first the other one** |
 | `\tkzInterLC[near](A,B)(O,C)` | same file | the first point is the one nearer to A |
+| `\tkzDefPointOnLine[pos=t](A,B)` | `tkz-obj-eu-points-spc.tex`: `\path (A) to [pos=t] coordinate (tkzPointResult) (B)` | A + t(B − A); t outside 0..1 extends the line (checked with pdflatex for t = −0.4, 1.7 and random t in −1..2) |
+
+Drawings added for the tools and the properties panel (no points to compare; `tests/latex.test.ts`
+compiles them and checks the log has no errors):
+
+| Command | Source | Semantics |
+|---|---|---|
+| `\tkzDrawArc(O,A)(B)` | `tkz-draw-eu-angles.tex`, `\tkz@DrawArcN` (the default `towards` type) | radius \|OA\|, from slope(O,A) to slope(O,B) after `\tkzNormalizeAngle`, counter-clockwise. Other types (`rotate`, `angles`, `R`, `R with nodes`) stay a warning. `delta` is ignored by the preview. |
+| `\tkzDrawSemiCircle(O,A)` | `tkz-draw-eu-circles.tex` | `\tkzDrawArc(O,A)(A')` with A' = 2O − A: the half counter-clockwise from A |
+| `\tkzDrawSector(O,A)(B)`, `\tkzFillSector` | `tkz-draw-eu-sectors.tex`, `towards` | O, then the arc above, closed |
+| `\tkzLabelAngle[dist=d](A,B,C){text}` | `tkz-draw-eu-angles.tex` | node at B + d·(direction of the bisector of the normalised angle from BA to BC), d = 1 by default. The older key `pos=` is read as `dist=`. |
+| `\tkzMarkSegment[mark=…]` | `tkz-draw-eu-lines.tex`: default `mark=\|`; `tkz-lib-eu-marks.tex` defines `\|\|`, `\|\|\|`, `s\|`… | the preview draws the number of bars; `mark=none` draws nothing |
+| `\tkzMarkAngle[arc=ll]` | `/tkzmkangle` keys, `arc=l\|ll\|lll` | 1–3 concentric arcs |
+
+Asymptote counterparts written by the converter: `interp(A, B, t)` for `\tkzDefPointOnLine`,
+`arc(O, A, B)` (plain.asy: counter-clockwise from the direction of A to that of B, radius
+\|OA\|), `arc(O, A, 2*O - A)` for a semicircle, `O--arc(O, A, B)--cycle` for a sector, and for an
+angle label `label(…, B + d*dir(degrees(A - B) + ((degrees(C - B) - degrees(A - B)) % 360)/2))`
+(`degrees(pair)` is in [0, 360) and `x % y` takes the sign of y, both checked in `asy`). The front
+end reads `arc(c, A, B[, CCW])` and `arc(c, r, a1, a2)`; clockwise arcs are a warning.
 
 Plain TikZ: `($(A)!t!(B)$)` is the homothety of B with centre A and ratio t, `($(A)!(P)!(B)$)`
 the projection of P on AB. A `circle (r)` is drawn through a helper point r to the right of the

@@ -80,7 +80,7 @@ export function buildGraph(src: string, parsed: ParseResult): BuildResult {
         }
       }),
     );
-    drawings.push({ id: '', d: st.d, span: st.span });
+    drawings.push({ id: '', d: st.d, span: st.span, ...(st.opt ? { opt: st.opt } : {}) });
   }
   // canonical order (same as codegen): drawings first, then labels — stable otherwise
   const isLabel = (d: Drawing) => d.d.cmd === 'tkzLabelPoints' || d.d.cmd === 'tkzLabelPoint';

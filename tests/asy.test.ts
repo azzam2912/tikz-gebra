@@ -94,7 +94,7 @@ describe('points', () => {
     // geometry.asy excenter(A,B,C) is opposite C = tkz [ex](A,C,B)
     expect(step(`${base} pair X = excenter(A, B, C);`, 'X')).toMatchObject({ op: 'center', kind: 'ex', args: ['A', 'C', 'B'] });
     expect(step(`${base} triangle t = triangle(A,B,C); point X = excenter(t.BC);`, 'X')).toMatchObject({ kind: 'ex', args: ['B', 'A', 'C'] });
-    expect(step(`${base} pair X = interp(A, B, 0.25);`, 'X')).toMatchObject({ op: 'homothety', args: ['B', 'A'], k: 0.25 });
+    expect(step(`${base} pair X = interp(A, B, 0.25);`, 'X')).toMatchObject({ op: 'onLine', args: ['A', 'B'], t: 0.25 });
   });
   it('anything else becomes an expression step evaluated numerically', () => {
     const c = step('pair A=(0,0), B=(3,4); pair X = A + unit(B - A);', 'X');
@@ -194,7 +194,7 @@ describe('errors and warnings', () => {
     expect(errors('pair X = Q + (1,0);')[0]!.message).toMatch(/Unknown name "Q"/);
   });
   it('a drawing that cannot be followed is skipped with a warning', () => {
-    const w = warnings('pair A=(0,0),B=(1,0); draw(arc(A, 1, 0, 90)); draw(A--B);');
+    const w = warnings('pair A=(0,0),B=(1,0); draw(ellipse(A, 1, 2)); draw(A--B);');
     expect(w[0]).toMatchObject({ code: 'ignored' });
     expect(w[0]!.message).toMatch(/not drawn/);
   });

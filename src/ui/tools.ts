@@ -4,8 +4,9 @@
 
 import { constructionAsy, drawingAsy } from '../codegen/asy';
 import { constructionCode, drawingCode } from '../codegen/codegen';
+import { interCC, interLC, interLL, normalizeAngles } from '../geom/constructions';
 import { evaluate, type Evaluated } from '../geom/evaluate';
-import { dist, type Vec } from '../geom/vec';
+import { dist, sub, type Vec } from '../geom/vec';
 import type { Construction, DrawingSpec, Graph, PointId } from '../graph/types';
 import { isAux } from '../parser/ast';
 import { compile, type Lang } from '../pipeline';
@@ -34,16 +35,28 @@ export type ToolId =
   | 'orthocenter'
   | 'incircle'
   | 'rightAngle'
-  | 'angleMark';
+  | 'angleMark'
+  | 'tangent'
+  | 'arc'
+  | 'semicircle'
+  | 'sector'
+  | 'rotate'
+  | 'dilate'
+  | 'translate';
 
-/** What a tool needs, in order. 'curve' = a line or a circle. */
-export type InputKind = 'point' | 'line' | 'curve';
+/**
+ * What a tool needs, in order. 'curve' = a line or a circle; 'circle' = a drawn circle or arc;
+ * 'object' = a point or a drawn object (segment, polygon, circle …) to transform.
+ */
+export type InputKind = 'point' | 'line' | 'curve' | 'circle' | 'object';
 
 export interface ToolSpec {
   id: ToolId;
-  group: 'basic' | 'lines' | 'points' | 'circles' | 'marks';
+  group: 'basic' | 'lines' | 'points' | 'circles' | 'transform' | 'marks';
   /** inputs in order; the polygon tool takes points until the first one is clicked again */
   inputs: InputKind[] | 'polygon';
+  /** a number the tool asks for before the clicks (rotation angle, dilation factor) */
+  param?: { kind: 'angle' | 'factor'; default: number };
 }
 
 export const TOOLS: ToolSpec[] = [
@@ -58,8 +71,11 @@ export const TOOLS: ToolSpec[] = [
   { id: 'midpoint', group: 'points', inputs: ['point', 'point'] },
   { id: 'intersect', group: 'points', inputs: ['curve', 'curve'] },
   { id: 'foot', group: 'points', inputs: ['point', 'line'] },
-  { id: 'reflectLine', group: 'points', inputs: ['point', 'line'] },
-  { id: 'reflectPoint', group: 'points', inputs: ['point', 'point'] },
+  { id: 'reflectLine', group: 'transform', inputs: ['object', 'line'] },
+  { id: 'reflectPoint', group: 'transform', inputs: ['object', 'point'] },
+  { id: 'rotate', group: 'transform', inputs: ['object', 'point'], param: { kind: 'angle', default: 90 } },
+  { id: 'dilate', group: 'transform', inputs: ['object', 'point'], param: { kind: 'factor', default: 2 } },
+  { id: 'translate', group: 'transform', inputs: ['object', 'point', 'point'] },
   { id: 'circumcenter', group: 'points', inputs: ['point', 'point', 'point'] },
   { id: 'incenter', group: 'points', inputs: ['point', 'point', 'point'] },
   { id: 'centroid', group: 'points', inputs: ['point', 'point', 'point'] },
@@ -67,14 +83,24 @@ export const TOOLS: ToolSpec[] = [
   { id: 'circle', group: 'circles', inputs: ['point', 'point'] },
   { id: 'circle3', group: 'circles', inputs: ['point', 'point', 'point'] },
   { id: 'incircle', group: 'circles', inputs: ['point', 'point', 'point'] },
+  { id: 'tangent', group: 'circles', inputs: ['point', 'circle'] },
+  { id: 'arc', group: 'circles', inputs: ['point', 'point', 'point'] },
+  { id: 'semicircle', group: 'circles', inputs: ['point', 'point'] },
+  { id: 'sector', group: 'circles', inputs: ['point', 'point', 'point'] },
   { id: 'rightAngle', group: 'marks', inputs: ['point', 'point', 'point'] },
   { id: 'angleMark', group: 'marks', inputs: ['point', 'point', 'point'] },
 ];
 
 export const toolSpec = (id: ToolId): ToolSpec => TOOLS.find((t) => t.id === id)!;
 
-/** What was clicked on the canvas. */
-export type Target = { kind: 'point'; name: PointId } | { kind: 'drawing'; id: string; at: Vec } | { kind: 'empty'; at: Vec };
+/**
+ * What was clicked on the canvas. `tol`: how far (figure units) a click may be from a crossing
+ * to snap to it; `shift`: put a point on the clicked object even next to a crossing.
+ */
+export type Target =
+  | { kind: 'point'; name: PointId }
+  | { kind: 'drawing'; id: string; at: Vec; tol?: number; shift?: boolean }
+  | { kind: 'empty'; at: Vec; tol?: number; shift?: boolean };
 
 /** A resolved input. 'new' is a free point that will be created where the user clicked. */
 export type Pick =
@@ -83,16 +109,27 @@ export type Pick =
   | { kind: 'line'; a: PointId; b: PointId; drawing?: string }
   /** the line through two clicked points (either may be new) */
   | { kind: 'line2'; p: Pick; q: Pick }
-  | { kind: 'circle'; c: PointId; th: PointId; drawing?: string };
+  | { kind: 'circle'; c: PointId; th: PointId; drawing?: string }
+  /** a new point bound to a line or circle (a glider) */
+  | { kind: 'glider'; curve: Curve; at: Vec }
+  /** a new point at a crossing of two drawn objects */
+  | { kind: 'cross'; x: Crossing }
+  /** a whole drawn object (transform tools) */
+  | { kind: 'object'; drawing: string };
 
 export interface ToolState {
   tool: ToolId;
   picks: Pick[];
   /** first point of a line given by two points (for 'line'/'curve' inputs) */
   half: Pick | null;
+  /** the tool's number (rotation angle in degrees, dilation factor) */
+  param?: number;
 }
 
-export const initialState = (tool: ToolId): ToolState => ({ tool, picks: [], half: null });
+export const initialState = (tool: ToolId, param?: number): ToolState => {
+  const p = param ?? toolSpec(tool).param?.default;
+  return { tool, picks: [], half: null, ...(p !== undefined ? { param: p } : {}) };
+};
 
 /** The input the tool waits for next (null when it needs nothing). */
 export function nextInput(s: ToolState): InputKind | null {
@@ -101,11 +138,145 @@ export function nextInput(s: ToolState): InputKind | null {
   return spec.inputs[s.picks.length] ?? null;
 }
 
+// ------------------------------------------------------------------ curves and crossings
+
+/**
+ * A drawn line or circle a point can sit on. Lines: `lo`/`hi` bound the parameter t of A + t(B − A)
+ * (a segment 0..1, a tkz-euclide line −0.2..1.2, an Asymptote line unbounded). Circles: centre c
+ * through th; arcs also have their angular range (degrees, counter-clockwise from t1 to t2).
+ */
+export type Curve =
+  | { kind: 'line'; a: PointId; b: PointId; lo: number; hi: number; drawing: string }
+  | { kind: 'circle'; c: PointId; th: PointId; drawing: string; range?: [number, number] };
+
+const ARC_CMDS = ['tkzDrawArc', 'tkzDrawSemiCircle', 'tkzDrawSector', 'tkzFillSector'];
+const CIRCLE_CMDS = ['tkzDrawCircle', 'tkzDrawCircles', 'tkzFillCircle'];
+const LINE_CMDS = ['tkzDrawSegment', 'tkzDrawSegments', 'tkzDrawLine', 'tkzDrawLines', 'tkzDrawPolygon', 'tkzDrawPolySeg', 'tkzFillPolygon'];
+
+/** The curves of one drawing (only those whose defining points can be named in the code). */
+export function curvesOf(g: Graph, pos: Evaluated, id: string): Curve[] {
+  const dr = g.drawings.find((x) => x.id === id);
+  if (!dr) return [];
+  const d = dr.d;
+  const out: Curve[] = [];
+  const named = (...n: PointId[]) => n.every((x) => !isAux(x) && pos.get(x));
+  if (CIRCLE_CMDS.includes(d.cmd)) {
+    for (const [c, th] of d.groups as [PointId, PointId][]) if (named(c, th)) out.push({ kind: 'circle', c, th, drawing: id });
+  } else if (ARC_CMDS.includes(d.cmd)) {
+    const [c, a, b] = d.groups[0]!;
+    const C = pos.get(c!);
+    const A = pos.get(a!);
+    if (!C || !A || !named(c!, a!)) return out;
+    const deg = (v: Vec) => (Math.atan2(v.y - C.y, v.x - C.x) * 180) / Math.PI;
+    const B = d.cmd === 'tkzDrawSemiCircle' ? { x: 2 * C.x - A.x, y: 2 * C.y - A.y } : pos.get(b!);
+    if (!B) return out;
+    out.push({ kind: 'circle', c: c!, th: a!, drawing: id, range: normalizeAngles(deg(A), deg(B)) });
+  } else if (LINE_CMDS.includes(d.cmd)) {
+    const pairs: [PointId, PointId][] = [];
+    if (d.cmd === 'tkzDrawPolygon' || d.cmd === 'tkzDrawPolySeg' || d.cmd === 'tkzFillPolygon') {
+      const v = d.groups[0]!;
+      for (let i = 0; i + 1 < v.length; i++) pairs.push([v[i]!, v[i + 1]!]);
+      if (d.cmd !== 'tkzDrawPolySeg' && v.length > 2) pairs.push([v[v.length - 1]!, v[0]!]);
+    } else for (const grp of d.groups) pairs.push([grp[0]!, grp[1]!]);
+    const line = d.cmd === 'tkzDrawLine' || d.cmd === 'tkzDrawLines';
+    const [lo, hi] = line ? (d.infinite ? [-Infinity, Infinity] : [-0.2, 1.2]) : [0, 1];
+    for (const [a, b] of pairs) if (named(a, b) && dist(pos.get(a)!, pos.get(b)!) > 0) out.push({ kind: 'line', a, b, lo, hi, drawing: id });
+  }
+  return out;
+}
+
+const lineParam = (p: Vec, a: Vec, b: Vec) => {
+  const d = sub(b, a);
+  return ((p.x - a.x) * d.x + (p.y - a.y) * d.y) / (d.x * d.x + d.y * d.y);
+};
+
+/** Is p (already on the curve's line / circle) on the drawn part of it? */
+function onDrawnPart(cv: Curve, p: Vec, pos: Evaluated): boolean {
+  if (cv.kind === 'line') {
+    const t = lineParam(p, pos.get(cv.a)!, pos.get(cv.b)!);
+    return t >= cv.lo - 1e-9 && t <= cv.hi + 1e-9;
+  }
+  if (!cv.range) return true;
+  const c = pos.get(cv.c)!;
+  let a = (Math.atan2(p.y - c.y, p.x - c.x) * 180) / Math.PI;
+  while (a < cv.range[0] - 1e-7) a += 360;
+  while (a > cv.range[0] + 360) a -= 360;
+  return a <= cv.range[1] + 1e-7;
+}
+
+/** A crossing of two curves; `index` is which of the two intersection points (LC, CC) it is. */
+export interface Crossing {
+  at: Vec;
+  a: Curve;
+  b: Curve;
+  index: 0 | 1;
+}
+
+const sameCurve = (p: Curve, q: Curve) =>
+  p.kind === 'line' && q.kind === 'line'
+    ? (p.a === q.a && p.b === q.b) || (p.a === q.b && p.b === q.a)
+    : p.kind === 'circle' && q.kind === 'circle' && p.c === q.c && p.th === q.th;
+
+/** Every crossing of two drawn curves that is not already a point of the figure. */
+export function crossings(g: Graph, pos: Evaluated): Crossing[] {
+  const curves = g.drawings.flatMap((d) => curvesOf(g, pos, d.id));
+  const known = [...pos.values()].filter((p): p is Vec => !!p);
+  const out: Crossing[] = [];
+  const P = (n: PointId) => pos.get(n)!;
+  for (let i = 0; i < curves.length; i++) {
+    for (let j = i + 1; j < curves.length; j++) {
+      let a = curves[i]!;
+      let b = curves[j]!;
+      if (sameCurve(a, b)) continue;
+      if (a.kind === 'circle' && b.kind === 'line') [a, b] = [b, a];
+      let pts: (Vec | null)[] = [];
+      if (a.kind === 'line' && b.kind === 'line') pts = [interLL(P(a.a), P(a.b), P(b.a), P(b.b))];
+      else if (a.kind === 'line' && b.kind === 'circle') pts = interLC(P(a.a), P(a.b), P(b.c), P(b.th)) ?? [];
+      else if (a.kind === 'circle' && b.kind === 'circle') pts = interCC(P(a.c), P(a.th), P(b.c), P(b.th)) ?? [];
+      pts.forEach((p, k) => {
+        if (!p || !onDrawnPart(a, p, pos) || !onDrawnPart(b, p, pos)) return;
+        const s = Math.max(1, Math.abs(p.x), Math.abs(p.y));
+        if (known.some((q) => dist(p, q) < 1e-6 * s)) return;
+        if (out.some((x) => dist(x.at, p) < 1e-6 * s)) return;
+        out.push({ at: p, a, b, index: k as 0 | 1 });
+      });
+    }
+  }
+  return out;
+}
+
+/** The point a click makes for a point input: a crossing nearby, a glider on the clicked object, or a free point. */
+export function pointPick(g: Graph, pos: Evaluated, t: Exclude<Target, { kind: 'point' }>, snap: boolean): Pick {
+  const tol = t.tol ?? 0.15;
+  if (!t.shift) {
+    let best: Crossing | null = null;
+    for (const x of crossings(g, pos)) if (dist(x.at, t.at) <= tol && (!best || dist(x.at, t.at) < dist(best.at, t.at))) best = x;
+    if (best) return { kind: 'cross', x: best };
+  }
+  if (t.kind === 'drawing') {
+    let best: Curve | null = null;
+    let bestD = Infinity;
+    for (const cv of curvesOf(g, pos, t.id)) {
+      const d = cv.kind === 'circle' ? Math.abs(dist(pos.get(cv.c)!, t.at) - dist(pos.get(cv.c)!, pos.get(cv.th)!)) : distToSegment(t.at, pos.get(cv.a)!, pos.get(cv.b)!, true);
+      if (d < bestD) {
+        bestD = d;
+        best = cv;
+      }
+    }
+    if (best) return { kind: 'glider', curve: best, at: t.at };
+  }
+  return { kind: 'new', at: { x: roundCoord(t.at.x, snap), y: roundCoord(t.at.y, snap) } };
+}
+
 /** Line or circle under a click on a drawing (polygons: the nearest side). */
 export function curveOfDrawing(g: Graph, pos: Evaluated, id: string, at: Vec): Pick | null {
   const d = g.drawings.find((x) => x.id === id);
   if (!d) return null;
   const cmd = d.d.cmd;
+  if (ARC_CMDS.includes(cmd)) {
+    const [c, th] = d.d.groups[0]!;
+    return { kind: 'circle', c: c!, th: th!, drawing: id };
+  }
   if (cmd === 'tkzDrawCircle' || cmd === 'tkzDrawCircles' || cmd === 'tkzFillCircle') {
     // the circle whose rim is nearest
     let best: Pick | null = null;
@@ -174,7 +345,7 @@ export function feed(s: ToolState, t: Target, g: Graph | null, pos: Evaluated, s
     const picks = [...s.picks, p];
     const spec = toolSpec(s.tool);
     const complete = spec.inputs !== 'polygon' && picks.length === spec.inputs.length;
-    if (complete) return { state: initialState(s.tool), done: picks };
+    if (complete) return { state: initialState(s.tool, s.param), done: picks };
     return { state: { ...s, picks, half: null } };
   };
   if (want === 'point') {
@@ -182,7 +353,7 @@ export function feed(s: ToolState, t: Target, g: Graph | null, pos: Evaluated, s
       // clicking the first point again closes the polygon
       const first = s.picks[0];
       if (t.kind === 'point' && first?.kind === 'point' && first.name === t.name && s.picks.length >= 3) {
-        return { state: initialState(s.tool), done: s.picks };
+        return { state: initialState(s.tool, s.param), done: s.picks };
       }
     }
     if (t.kind === 'point') {
@@ -193,12 +364,22 @@ export function feed(s: ToolState, t: Target, g: Graph | null, pos: Evaluated, s
     }
     return add(newPoint(t.at));
   }
+  if (want === 'object') {
+    if (t.kind === 'point') return add({ kind: 'point', name: t.name });
+    if (t.kind !== 'drawing' || !g) return { state: s, rejected: true };
+    const d = g.drawings.find((x) => x.id === t.id);
+    // every point of the object must have a name the code can use
+    if (!d || !TRANSFORMABLE.includes(d.d.cmd) || d.d.groups.some((grp) => grp.some(isAux))) return { state: s, rejected: true };
+    return add({ kind: 'object', drawing: t.id });
+  }
   // a line (or a circle): click the object itself, or two points
   if (t.kind === 'drawing' && g) {
     const c = curveOfDrawing(g, pos, t.id, t.at);
-    if (!c || (want === 'line' && c.kind !== 'line')) return { state: s, rejected: true };
+    if (!c || (want === 'line' && c.kind !== 'line') || (want === 'circle' && c.kind !== 'circle')) return { state: s, rejected: true };
+    if (c.kind === 'circle' && (isAux(c.c) || isAux(c.th))) return { state: s, rejected: true };
     return add(c);
   }
+  if (want === 'circle') return { state: s, rejected: true };
   const pt: Pick = t.kind === 'point' ? { kind: 'point', name: t.name } : newPoint(t.at);
   if (!s.half) return { state: { ...s, half: pt } };
   if (s.half.kind === 'point' && pt.kind === 'point' && s.half.name === pt.name) return { state: s, rejected: true };
@@ -235,11 +416,23 @@ export function namer(used: Set<string>) {
     helper(): string {
       for (let i = 1; ; i++) if (!used.has(`q${i}`)) return take(`q${i}`);
     },
+    /** name of the image of `p` under a transformation: A → A_1 (A_2 …), valid in TeX and Asymptote */
+    image(p: string): string {
+      if (/^[A-Za-z]$/.test(p)) for (let i = 1; i < 100; i++) if (!used.has(`${p}_${i}`)) return take(`${p}_${i}`);
+      return this.point();
+    },
   };
 }
 
 /** Turn the picks of a finished tool into constructions and drawings. */
-export function build(tool: ToolId, picks: Pick[], used: Set<string>): Built {
+/** Drawings the transform tools can map (their image is the same command on the image points). */
+const TRANSFORMABLE = [
+  'tkzDrawSegment', 'tkzDrawSegments', 'tkzDrawLine', 'tkzDrawLines', 'tkzDrawPolygon', 'tkzDrawPolySeg', 'tkzFillPolygon',
+  'tkzDrawCircle', 'tkzDrawCircles', 'tkzFillCircle', 'tkzDrawArc', 'tkzDrawSemiCircle', 'tkzDrawSector', 'tkzFillSector',
+  'tkzMarkAngle', 'tkzMarkRightAngle', 'tkzMarkSegment', 'tkzMarkSegments',
+];
+
+export function build(tool: ToolId, picks: Pick[], used: Set<string>, ctx: { pos: Evaluated; snap: boolean; param?: number; graph?: Graph | null } = { pos: new Map(), snap: false }): Built {
   const names = namer(used);
   const steps: Construction[] = [];
   const drawings: DrawingSpec[] = [];
@@ -253,7 +446,88 @@ export function build(tool: ToolId, picks: Pick[], used: Set<string>): Built {
   const pointOf = (p: Pick): PointId => {
     if (p.kind === 'point') return p.name;
     if (p.kind === 'new') return free(p.at);
+    if (p.kind === 'glider') return glider(p.curve, p.at);
+    if (p.kind === 'cross') return crossing(p.x);
     throw new Error('expected a point');
+  };
+  /** Is the picked point on the circle (so the tangent is the one at it)? */
+  const onCircle = (p: Pick, c: Extract<Pick, { kind: 'circle' }>): boolean => {
+    if (p.kind === 'glider') return p.curve.kind === 'circle' && p.curve.c === c.c && p.curve.th === c.th;
+    const at = p.kind === 'point' ? ctx.pos.get(p.name) : p.kind === 'new' ? p.at : p.kind === 'cross' ? p.x.at : null;
+    const C = ctx.pos.get(c.c);
+    const T = ctx.pos.get(c.th);
+    if (!at || !C || !T) return false;
+    const r = dist(C, T);
+    return Math.abs(dist(at, C) - r) <= 1e-6 * Math.max(1, r);
+  };
+  /** Map a point or a whole drawn object; the images of shown points are shown (A → A_1). */
+  const transform = (src: Pick, map: (p: PointId, out: PointId) => Construction, reverses: boolean) => {
+    if (src.kind !== 'object') {
+      const p = pointOf(src);
+      def(map(p, names.image(p)));
+      return;
+    }
+    const d = ctx.graph?.drawings.find((x) => x.id === src.drawing)?.d;
+    if (!d) return;
+    const images = new Map<PointId, PointId>();
+    const img = (p: PointId) => {
+      let n = images.get(p);
+      if (!n) {
+        // the user's points get named images; helper points (q1 …) get helper images
+        const visible = !isAux(p) && !/^q\d+$/.test(p);
+        n = def(map(p, visible ? names.image(p) : names.helper()), visible);
+        images.set(p, n);
+      }
+      return n;
+    };
+    let groups = d.groups.map((grp) => grp.map(img));
+    let cmd = d.cmd;
+    if (reverses) {
+      if (cmd === 'tkzDrawArc' || cmd === 'tkzDrawSector' || cmd === 'tkzFillSector') groups = groups.map(([o, a, b]) => [o!, b!, a!]);
+      else if (cmd === 'tkzMarkAngle') groups = groups.map((g) => [...g].reverse());
+      else if (cmd === 'tkzDrawSemiCircle') {
+        // the mirrored half starts at the image of the other end of the diameter
+        const [o, a] = d.groups[0]!;
+        const end = def({ op: 'symmetry', args: [a!, o!], out: [names.helper()] }, false);
+        groups = [[img(o!), img(end)]];
+        cmd = 'tkzDrawSemiCircle';
+      }
+    }
+    draw({ cmd, options: null, groups });
+  };
+  /** A point on a line (\tkzDefPointOnLine) or a circle (rotation of its through point). */
+  const glider = (cv: Curve, at: Vec): PointId => {
+    const n = names.point();
+    if (cv.kind === 'line') {
+      const A = ctx.pos.get(cv.a)!;
+      const B = ctx.pos.get(cv.b)!;
+      let t = Math.max(cv.lo, Math.min(cv.hi, lineParam(at, A, B)));
+      t = ctx.snap ? Math.round(t / 0.05) * 0.05 : Math.round(t * 1000) / 1000;
+      steps.push({ op: 'onLine', args: [cv.a, cv.b], out: [n], t: Object.is(t, -0) ? 0 : t });
+    } else {
+      const C = ctx.pos.get(cv.c)!;
+      const T = ctx.pos.get(cv.th)!;
+      let a = ((Math.atan2(at.y - C.y, at.x - C.x) - Math.atan2(T.y - C.y, T.x - C.x)) * 180) / Math.PI;
+      a = ((a % 360) + 540) % 360 - 180;
+      a = ctx.snap ? Math.round(a / 5) * 5 : Math.round(a * 10) / 10;
+      steps.push({ op: 'rotation', args: [cv.th, cv.c], out: [n], angle: Object.is(a, -0) ? 0 : a });
+    }
+    shown.push(n);
+    return n;
+  };
+  /** The intersection point at a crossing (the other one of a pair gets an internal name). */
+  const crossing = (x: Crossing): PointId => {
+    const n = names.point();
+    const { a, b } = x;
+    if (a.kind === 'line' && b.kind === 'line') steps.push({ op: 'interLL', args: [a.a, a.b, b.a, b.b], out: [n] });
+    else {
+      const other = `~x${steps.length}`;
+      const out: [PointId, PointId] = x.index === 0 ? [n, other] : [other, n];
+      if (a.kind === 'line' && b.kind === 'circle') steps.push({ op: 'interLC', args: [a.a, a.b, b.c, b.th], out });
+      else if (a.kind === 'circle' && b.kind === 'circle') steps.push({ op: 'interCC', args: [a.c, a.th, b.c, b.th], out });
+    }
+    shown.push(n);
+    return n;
   };
   const lineOf = (p: Pick): [PointId, PointId] => {
     if (p.kind === 'line') return [p.a, p.b];
@@ -303,17 +577,67 @@ export function build(tool: ToolId, picks: Pick[], used: Set<string>): Built {
     case 'midpoint':
       def({ op: 'midpoint', args: [pointOf(picks[0]!), pointOf(picks[1]!)], out: [names.point()] });
       break;
-    case 'foot':
-    case 'reflectLine': {
+    case 'foot': {
       const p = pointOf(picks[0]!);
       const [a, b] = lineOf(picks[1]!);
-      def({ op: tool === 'foot' ? 'projection' : 'reflection', args: [p, a, b], out: [names.point()] });
+      def({ op: 'projection', args: [p, a, b], out: [names.point()] });
       break;
     }
-    case 'reflectPoint': {
+    case 'reflectLine':
+    case 'reflectPoint':
+    case 'rotate':
+    case 'dilate':
+    case 'translate': {
+      let map: (p: PointId, out: PointId) => Construction;
+      if (tool === 'reflectLine') {
+        const [a, b] = lineOf(picks[1]!);
+        map = (p, out) => ({ op: 'reflection', args: [p, a, b], out: [out] });
+      } else if (tool === 'translate') {
+        const a = pointOf(picks[1]!);
+        const b = pointOf(picks[2]!);
+        map = (p, out) => ({ op: 'translation', args: [p, a, b], out: [out] });
+      } else {
+        const c = pointOf(picks[1]!);
+        if (tool === 'reflectPoint') map = (p, out) => ({ op: 'symmetry', args: [p, c], out: [out] });
+        else if (tool === 'rotate') map = (p, out) => ({ op: 'rotation', args: [p, c], out: [out], angle: ctx.param ?? 90 });
+        else map = (p, out) => ({ op: 'homothety', args: [p, c], out: [out], k: ctx.param ?? 2 });
+      }
+      // a reflection reverses the orientation: arcs and angle marks swap their ends
+      transform(picks[0]!, map, tool === 'reflectLine');
+      break;
+    }
+    case 'tangent': {
+      const circle = picks[1]!;
+      if (circle.kind !== 'circle') throw new Error('expected a circle');
+      const on = onCircle(picks[0]!, circle);
       const p = pointOf(picks[0]!);
-      const c = pointOf(picks[1]!);
-      def({ op: 'symmetry', args: [p, c], out: [names.point()] });
+      if (on) {
+        // tangent at P: perpendicular to the radius, centred on P
+        const q = def({ op: 'tangentAt', args: [p, circle.c], out: [names.helper()] }, false);
+        const q2 = def({ op: 'symmetry', args: [q, p], out: [names.helper()] }, false);
+        draw({ cmd: 'tkzDrawLine', options: null, groups: [[q2, q]] });
+      } else {
+        // tangents from P: the touching points are on the circle with diameter OP
+        const m = def({ op: 'midpoint', args: [circle.c, p], out: [names.helper()] }, false);
+        const t1 = names.point();
+        const t2 = names.point();
+        def({ op: 'interCC', args: [circle.c, circle.th, m, circle.c], out: [t1, t2] });
+        draw({ cmd: 'tkzDrawLines', options: null, groups: [[p, t1], [p, t2]] });
+      }
+      break;
+    }
+    case 'arc':
+    case 'sector': {
+      const v = picks.map(pointOf);
+      draw({ cmd: tool === 'arc' ? 'tkzDrawArc' : 'tkzDrawSector', options: null, groups: [v] });
+      break;
+    }
+    case 'semicircle': {
+      // on the diameter AB, counter-clockwise from A
+      const a = pointOf(picks[0]!);
+      const b = pointOf(picks[1]!);
+      const m = def({ op: 'midpoint', args: [a, b], out: [names.helper()] }, false);
+      draw({ cmd: 'tkzDrawSemiCircle', options: null, groups: [[m, a]] });
       break;
     }
     case 'circumcenter':
@@ -405,7 +729,7 @@ export function insert(code: string, lang: Lang, g: Graph | null, built: Built):
         continue;
       }
       // a line drawn with a tool is a whole line in Asymptote (geometry's line(A,B))
-      lines.push(...drawingAsy(d.cmd === 'tkzDrawLine' ? { ...d, infinite: true } : d, (p) => p, {}));
+      lines.push(...drawingAsy(d.cmd === 'tkzDrawLine' || d.cmd === 'tkzDrawLines' ? { ...d, infinite: true } : d, (p) => p, {}));
     }
   } else {
     for (const c of built.steps) lines.push(constructionCode(c, (p) => p, { pos }));
@@ -470,12 +794,21 @@ export const TOOL_TEXT: Record<ToolId, string> = {
   incircle: 'Incircle',
   rightAngle: 'Right-angle mark',
   angleMark: 'Angle mark',
+  tangent: 'Tangent (at a point on the circle, or from a point outside)',
+  arc: 'Arc (centre, start, towards)',
+  semicircle: 'Semicircle on a diameter',
+  sector: 'Sector (centre, start, towards)',
+  rotate: 'Rotate (object, centre)',
+  dilate: 'Dilate (object, centre)',
+  translate: 'Translate (object, vector from → to)',
 };
 
 export const INPUT_HINT: Record<InputKind, string> = {
-  point: 'click a point, or an empty spot for a new one',
+  point: 'click a point, an object (point on it) or an empty spot',
   line: 'click a line or segment (or two points)',
   curve: 'click a line, segment or circle (or two points for a line)',
+  circle: 'click a circle or arc',
+  object: 'click a point or an object (segment, polygon, circle …)',
 };
 
 /** Hint for the current state of a tool, e.g. "Midpoint: click a point … (1/2)". */
@@ -533,8 +866,7 @@ export function handlePick(state: ToolState, target: Target, code: string, lang:
   let t = target;
   const needsPoint = want === 'point' || t.kind === 'empty';
   if (needsPoint && t.kind !== 'point') {
-    const at = { x: roundCoord(t.at.x, snap), y: roundCoord(t.at.y, snap) };
-    const b = build('point', [{ kind: 'new', at }], usedNames(g, text));
+    const b = build('point', [pointPick(g, pos, t, snap)], usedNames(g, text), { pos, snap });
     text = insert(text, lang, g, b).text;
     t = { kind: 'point', name: b.shown[0]! };
     g = compile(text, lang).graph;
@@ -545,7 +877,7 @@ export function handlePick(state: ToolState, target: Target, code: string, lang:
   const changed = text !== code ? { text } : {};
   if (r.rejected) return { state, rejected: true, ...changed };
   if (!r.done) return { state: r.state, ...changed };
-  const built = build(state.tool, r.done, usedNames(g, text));
+  const built = build(state.tool, r.done, usedNames(g, text), { pos, snap, graph: g, ...(state.param !== undefined ? { param: state.param } : {}) });
   if (!built.steps.length && !built.drawings.length) return { state: r.state, finished: true, ...changed };
   const ins = insert(text, lang, g, built);
   return { state: r.state, text: ins.text, undefinedPoints: ins.undefinedPoints, finished: true };

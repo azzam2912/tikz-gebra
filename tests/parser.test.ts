@@ -46,7 +46,7 @@ describe('free points', () => {
     const lits = parse(src).statements.map((st) => (st as DefStatement).lit!);
     const txt = (sp: { from: number; to: number }) => src.slice(sp.from, sp.to);
     expect(lits[0]).toMatchObject({ kind: 'xy' });
-    expect(lits.map((l) => (l.kind === 'xy' ? [txt(l.xs[0]!), txt(l.ys[0]!)] : [txt(l.spans[0]!), l.r]))).toEqual([
+    expect(lits.map((l) => (l.kind === 'xy' ? [txt(l.xs[0]!), txt(l.ys[0]!)] : [txt(l.spans[0]!), l.kind === 'angle' ? l.r : null]))).toEqual([
       ['1.5', '-2'],
       ['3', '4'],
       ['75', 1],
